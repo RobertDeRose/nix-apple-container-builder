@@ -1,5 +1,9 @@
 # nix-apple-container-builder
 
+<p align="center">
+  <img src="assets/logo.png" alt="nix-apple-container-builder logo" width="240" />
+</p>
+
 `nix-apple-container-builder` is a `nix-darwin` module that configures an
 Apple Container based `aarch64-linux` remote builder for Nix.
 
