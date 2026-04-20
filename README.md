@@ -116,6 +116,12 @@ After activation, the main verification entrypoint is:
 ~/.local/state/container-builder/verify-builder.sh
 ```
 
+For a quick non-destructive status check, the module also installs:
+
+```bash
+/usr/local/bin/container-builder-status
+```
+
 Suggested validation after activation:
 
 The generated helper checks:

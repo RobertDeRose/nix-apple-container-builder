@@ -261,6 +261,31 @@ let
     exec ${escapeShellArg cfg.containerBinary} rm -f ${escapeShellArg effectiveContainerName}
   '';
 
+  statusScript = pkgs.writeShellScript "container-builder-status" ''
+    set -euo pipefail
+
+    host_alias=${escapeShellArg cfg.hostAlias}
+    ssh_config=${escapeShellArg "${workDir}/ssh_config_root"}
+    container_bin=${escapeShellArg cfg.containerBinary}
+    container_name=${escapeShellArg effectiveContainerName}
+
+    printf '==> Apple container system\n'
+    "$container_bin" system status || true
+
+    printf '\n==> Builder container\n'
+    "$container_bin" inspect "$container_name" 2>/dev/null || printf 'container %s not found\n' "$container_name"
+
+    printf '\n==> SSH handshake\n'
+    if /usr/bin/ssh -F "$ssh_config" -o BatchMode=yes -o ConnectTimeout=2 "$host_alias" true >/dev/null 2>&1; then
+      printf 'ok\n'
+    else
+      printf 'failed\n'
+    fi
+
+    printf '\n==> Remote store ping\n'
+    nix store ping --store ${escapeShellArg "${cfg.protocol}://${cfg.hostAlias}"} || true
+  '';
+
   verifyScript = pkgs.writeShellScript "container-builder-verify" ''
     set -euo pipefail
 
@@ -586,8 +611,10 @@ in
       ${pkgs.coreutils}/bin/install -m 0755 ${proxyScript} ${escapeShellArg "${workDir}/proxy.sh"}
       ${pkgs.coreutils}/bin/install -m 0755 ${startScript} ${escapeShellArg "${workDir}/start-container.sh"}
       ${pkgs.coreutils}/bin/install -m 0755 ${stopScript} ${escapeShellArg "${workDir}/stop-container.sh"}
+      ${pkgs.coreutils}/bin/install -m 0755 ${statusScript} ${escapeShellArg "${workDir}/status-builder.sh"}
       ${pkgs.coreutils}/bin/install -m 0755 ${verifyScript} ${escapeShellArg "${workDir}/verify-builder.sh"}
       ${pkgs.coreutils}/bin/install -m 0755 ${sshWrapperScript} ${escapeShellArg "${workDir}/ssh-wrapper.sh"}
+      ${pkgs.coreutils}/bin/install -m 0755 ${statusScript} /usr/local/bin/container-builder-status
       ${pkgs.coreutils}/bin/install -m 0644 ${userSshConfig} ${escapeShellArg "${workDir}/ssh_config"}
       ${pkgs.coreutils}/bin/install -m 0644 ${rootSshConfig} ${escapeShellArg "${workDir}/ssh_config_root"}
       /usr/sbin/chown ${escapeShellArg owner}:staff \
@@ -596,6 +623,7 @@ in
         ${escapeShellArg "${workDir}/proxy.sh"} \
         ${escapeShellArg "${workDir}/start-container.sh"} \
         ${escapeShellArg "${workDir}/stop-container.sh"} \
+        ${escapeShellArg "${workDir}/status-builder.sh"} \
         ${escapeShellArg "${workDir}/verify-builder.sh"} \
         ${escapeShellArg "${workDir}/ssh-wrapper.sh"} \
         ${escapeShellArg "${workDir}/ssh_config"} \
