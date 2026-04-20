@@ -8,6 +8,31 @@ with lib;
 let
   cfg = config.services.container-builder;
   owner = cfg.user;
+  containerConfigSpec = pkgs.writeText "container-builder-config.json" (builtins.toJSON {
+    inherit owner;
+    containerName = cfg.containerName;
+    hostAlias = cfg.hostAlias;
+    sshUser = cfg.sshUser;
+    listenAddress = cfg.listenAddress;
+    port = cfg.port;
+    containerPort = cfg.containerPort;
+    workingDirectory = cfg.workingDirectory;
+    image = cfg.image;
+    cpus = cfg.cpus;
+    memory = cfg.memory;
+    dns = cfg.dns;
+    bridgeEnable = cfg.bridge.enable;
+    installerVersion = cfg.installer.version;
+    protocol = cfg.protocol;
+    systems = cfg.systems;
+    supportedFeatures = cfg.supportedFeatures;
+    mandatoryFeatures = cfg.mandatoryFeatures;
+    maxJobs = cfg.maxJobs;
+    speedFactor = cfg.speedFactor;
+    autoStart = cfg.autoStart;
+  });
+  containerVersion = builtins.substring 0 12 (builtins.baseNameOf containerConfigSpec);
+  effectiveContainerName = "${cfg.containerName}-${containerVersion}";
 
   workDir = cfg.workingDirectory;
   containerExecutable = "/usr/local/bin/container";
@@ -31,7 +56,7 @@ let
     fi
 
     if [ ! -f "$workdir/ssh_host_ed25519_key" ]; then
-      /usr/bin/ssh-keygen -t ed25519 -f "$workdir/ssh_host_ed25519_key" -N "" -C ${escapeShellArg "${cfg.containerName}-host"}
+      /usr/bin/ssh-keygen -t ed25519 -f "$workdir/ssh_host_ed25519_key" -N "" -C ${escapeShellArg "${effectiveContainerName}-host"}
     fi
   '';
 
@@ -97,7 +122,7 @@ let
   '';
 
   proxyScript = pkgs.writeShellScript "container-builder-proxy" ''
-    exec ${escapeShellArg cfg.containerBinary} exec -i ${escapeShellArg cfg.containerName} \
+    exec ${escapeShellArg cfg.containerBinary} exec -i ${escapeShellArg effectiveContainerName} \
       bash -c ${escapeShellArg "exec 3<>/dev/tcp/127.0.0.1/${toString cfg.containerPort}; cat <&3 & cat >&3; kill %1 2>/dev/null"}
   '';
 
@@ -130,12 +155,35 @@ let
 
     container_bin=${escapeShellArg cfg.containerBinary}
     workdir=${escapeShellArg workDir}
-    container_name=${escapeShellArg cfg.containerName}
+    container_base=${escapeShellArg cfg.containerName}
+    container_name=${escapeShellArg effectiveContainerName}
 
     if [ ! -f "$workdir/builder_ed25519" ] || [ ! -f "$workdir/ssh_host_ed25519_key" ]; then
       echo "container-builder keys missing in $workdir; run $workdir/bootstrap-keys.sh first" >&2
       exit 1
     fi
+
+    while IFS= read -r line; do
+      set -- $line
+      existing_name="$1"
+
+      if [ -z "$existing_name" ] || [ "$existing_name" = "ID" ]; then
+        continue
+      fi
+
+      case "$existing_name" in
+        "$container_name")
+          ;;
+        "$container_base")
+          echo "removing stale unversioned container-builder container"
+          "$container_bin" rm -f "$existing_name" >/dev/null 2>&1 || true
+          ;;
+        "$container_base"-*)
+          echo "removing stale container-builder generation $existing_name"
+          "$container_bin" rm -f "$existing_name" >/dev/null 2>&1 || true
+          ;;
+      esac
+    done < <("$container_bin" list --all 2>/dev/null || true)
 
     container_info="$($container_bin inspect "$container_name" --format json 2>/dev/null || true)"
 
@@ -157,6 +205,7 @@ let
     args=(
       run
       -d
+      --rm
       --name "$container_name"
       --cpus ${escapeShellArg (toString cfg.cpus)}
       -m ${escapeShellArg cfg.memory}
@@ -199,7 +248,7 @@ let
 
   stopScript = pkgs.writeShellScript "container-builder-stop" ''
     set -euo pipefail
-    exec ${escapeShellArg cfg.containerBinary} rm -f ${escapeShellArg cfg.containerName}
+    exec ${escapeShellArg cfg.containerBinary} rm -f ${escapeShellArg effectiveContainerName}
   '';
 
   verifyScript = pkgs.writeShellScript "container-builder-verify" ''
@@ -218,6 +267,10 @@ let
       fi
 
       "$container_bin" system start --enable-kernel-install
+
+      if [ -f "$runtime_plist" ]; then
+        launchctl load "$runtime_plist" || true
+      fi
     }
 
     printf '==> container system status\n'

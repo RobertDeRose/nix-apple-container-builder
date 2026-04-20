@@ -65,6 +65,11 @@ Known open areas:
 The module now exposes container DNS settings directly and defaults to public
 recursive resolvers so the builder can resolve `cache.nixos.org`.
 
+The builder container name is automatically versioned from a derivation-backed
+configuration spec. When relevant module settings change, the derivation store
+path changes too, and the module removes older `nix-builder-*` containers and
+recreates the builder with the current configuration during startup.
+
 Available options:
 
 - `services.container-builder.dns.servers`
