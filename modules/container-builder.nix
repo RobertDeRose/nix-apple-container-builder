@@ -8,6 +8,7 @@ with lib;
 let
   cfg = config.services.container-builder;
   owner = cfg.user;
+  overlayMountDir = "/nix-overlay";
   containerConfigSpec = pkgs.writeText "container-builder-config.json" (builtins.toJSON {
     inherit owner;
     containerName = cfg.containerName;
@@ -30,12 +31,15 @@ let
     maxJobs = cfg.maxJobs;
     speedFactor = cfg.speedFactor;
     autoStart = cfg.autoStart;
+    inherit overlayMountDir;
   });
   containerVersion = builtins.substring 0 12 (builtins.baseNameOf containerConfigSpec);
   effectiveContainerName = "${cfg.containerName}-${containerVersion}";
+  overlayVolumeName = "${cfg.containerName}-nix-overlay-${containerVersion}";
   containerConfigStamp = "generation=${containerVersion}";
 
   workDir = cfg.workingDirectory;
+  cacheDir = "${workDir}/cache";
   containerExecutable = "/usr/local/bin/container";
   sshKeyPath = "${workDir}/builder_ed25519";
   hostKeyPath = "${workDir}/ssh_host_ed25519_key";
@@ -65,6 +69,18 @@ let
     set -e
     export PATH="/root/.nix-profile/bin:$PATH"
 
+    overlay_root=${escapeShellArg overlayMountDir}
+
+    # Preserve the image's built-in /nix as the lower layer and keep builder
+    # writes in a persistent Apple container volume mounted at $overlay_root.
+    nix --extra-experimental-features "nix-command flakes" shell nixpkgs#util-linux -c sh -eu -c '
+      mkdir -p "$1/upper" /nix-lower
+      rm -rf "$1/work"
+      mkdir -p "$1/work"
+      mount --bind /nix /nix-lower
+      mount -t overlay overlay -o "lowerdir=/nix-lower,upperdir=$1/upper,workdir=$1/work" /nix
+    ' sh "$overlay_root"
+
     if ! id builder > /dev/null 2>&1; then
       echo "builder:x:1000:1000:builder:/home/builder:/bin/sh" >> /etc/passwd
       echo "builder:x:1000:" >> /etc/group
@@ -80,7 +96,12 @@ let
     substituters = https://cache.nixos.org/
     trusted-substituters = https://cache.nixos.org/
     trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+    narinfo-cache-positive-ttl = 3600
+    narinfo-cache-negative-ttl = 60
+    narinfo-cache-dir = /var/cache/nix/narinfo
     EOF
+
+    mkdir -p /var/cache/nix/narinfo
 
     mkdir -p /home/builder/.ssh
     cp /config/builder_ed25519.pub /home/builder/.ssh/authorized_keys
@@ -158,6 +179,7 @@ let
     workdir=${escapeShellArg workDir}
     container_base=${escapeShellArg cfg.containerName}
     container_name=${escapeShellArg effectiveContainerName}
+    overlay_volume=${escapeShellArg overlayVolumeName}
 
     if [ ! -f "$workdir/builder_ed25519" ] || [ ! -f "$workdir/ssh_host_ed25519_key" ]; then
       echo "container-builder keys missing in $workdir; run $workdir/bootstrap-keys.sh first" >&2
@@ -211,6 +233,13 @@ let
       "$container_bin" rm -f "$container_name" >/dev/null 2>&1 || true
     fi
 
+    if ! "$container_bin" volume inspect "$overlay_volume" >/dev/null 2>&1; then
+      echo "creating persistent builder overlay volume $overlay_volume"
+      "$container_bin" volume create \
+        --label ${escapeShellArg "org.nixos.container-builder.overlay=true"} \
+        "$overlay_volume" >/dev/null
+    fi
+
     args=(
       run
       -d
@@ -220,6 +249,8 @@ let
       --cpus ${escapeShellArg (toString cfg.cpus)}
       -m ${escapeShellArg cfg.memory}
       -v ${escapeShellArg "${workDir}:/config"}
+      -v ${escapeShellArg "${overlayVolumeName}:${overlayMountDir}"}
+      -v ${escapeShellArg "${cacheDir}:/var/cache/nix/narinfo"}
     )
 
     ${optionalString (cfg.dns.servers != [ ]) ''
@@ -612,8 +643,11 @@ in
       fi
 
       ${pkgs.coreutils}/bin/mkdir -p ${escapeShellArg workDir}
+      ${pkgs.coreutils}/bin/mkdir -p ${escapeShellArg cacheDir}
       /usr/sbin/chown ${escapeShellArg owner}:staff ${escapeShellArg workDir}
+      /usr/sbin/chown ${escapeShellArg owner}:staff ${escapeShellArg cacheDir}
       /bin/chmod 0700 ${escapeShellArg workDir}
+      /bin/chmod 0700 ${escapeShellArg cacheDir}
       ${pkgs.coreutils}/bin/install -m 0755 ${bootstrapKeysScript} ${escapeShellArg "${workDir}/bootstrap-keys.sh"}
       ${pkgs.coreutils}/bin/install -m 0755 ${initScript} ${escapeShellArg "${workDir}/init.sh"}
       ${pkgs.coreutils}/bin/install -m 0755 ${proxyScript} ${escapeShellArg "${workDir}/proxy.sh"}

@@ -65,6 +65,15 @@ Known open areas:
 The module now exposes container DNS settings directly and defaults to public
 recursive resolvers so the builder can resolve `cache.nixos.org`.
 
+The builder keeps the container itself ephemeral, but now mounts a persistent
+Apple container volume and overlays `/nix` inside the guest. The image's built-in
+`/nix` stays as the lower layer while builder writes land in a generation-scoped
+upper layer stored in that volume.
+
+The module also persists a local NAR metadata cache under
+`~/.local/state/container-builder/cache` and mounts it into the container at
+`/var/cache/nix/narinfo`.
+
 Available options:
 
 - `services.container-builder.dns.servers`
@@ -96,6 +105,7 @@ What it handles:
 - the builder container name is derived from a derivation-backed configuration spec
 - when relevant builder settings change, the derived generation changes too
 - stale older `nix-builder-*` generations are removed automatically
+- the persistent `/nix` overlay volume is generation-scoped so image/config changes get a fresh upper layer
 - the active container is stamped with its expected generation label and recreated if it drifts
 - the builder container is started as ephemeral with `--rm`
 
