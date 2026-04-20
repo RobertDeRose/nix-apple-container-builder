@@ -73,13 +73,11 @@ let
 
     # Preserve the image's built-in /nix as the lower layer and keep builder
     # writes in a persistent Apple container volume mounted at $overlay_root.
-    nix --extra-experimental-features "nix-command flakes" shell nixpkgs#util-linux -c sh -eu -c '
-      mkdir -p "$1/upper" /nix-lower
-      rm -rf "$1/work"
-      mkdir -p "$1/work"
-      mount --bind /nix /nix-lower
-      mount -t overlay overlay -o "lowerdir=/nix-lower,upperdir=$1/upper,workdir=$1/work" /nix
-    ' sh "$overlay_root"
+    mkdir -p "$overlay_root/upper" /nix-lower
+    rm -rf "$overlay_root/work"
+    mkdir -p "$overlay_root/work"
+    mount --bind /nix /nix-lower
+    mount -t overlay overlay -o "lowerdir=/nix-lower,upperdir=$overlay_root/upper,workdir=$overlay_root/work" /nix
 
     if ! id builder > /dev/null 2>&1; then
       echo "builder:x:1000:1000:builder:/home/builder:/bin/sh" >> /etc/passwd
@@ -140,7 +138,7 @@ let
     EOF
 
     nix-daemon &
-    exec $(which sshd) -D -e
+    exec /root/.nix-profile/bin/sshd -D -e
   '';
 
   proxyScript = pkgs.writeShellScript "container-builder-proxy" ''
@@ -506,7 +504,7 @@ in
 
     image = mkOption {
       type = types.str;
-      default = "docker.io/nixos/nix:latest";
+      default = "ghcr.io/robertderose/nix-apple-container-builder:builder-latest";
       description = "OCI image used for the Linux builder container.";
     };
 

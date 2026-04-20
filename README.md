@@ -11,6 +11,7 @@ Current design highlights:
 
 - installs Apple `container` from the official signed GitHub release package
 - configures `nix.buildMachines` for `ssh-ng://container-builder`
+- uses a published GHCR builder image with overlay mount tooling preinstalled
 - manages a durable state directory under `~/.local/state/container-builder`
 - installs launch agents for the container runtime and the SSH bridge
 - configures container DNS explicitly for cache resolution
@@ -23,6 +24,9 @@ The flake exports:
 
 - `darwinModules.default`
 - `darwinModules.container-builder`
+
+The repo also contains a builder image definition under `images/builder` and a
+GitHub Actions workflow that publishes it to GHCR.
 
 ## Example
 
@@ -69,6 +73,10 @@ The builder keeps the container itself ephemeral, but now mounts a persistent
 Apple container volume and overlays `/nix` inside the guest. The image's built-in
 `/nix` stays as the lower layer while builder writes land in a generation-scoped
 upper layer stored in that volume.
+
+By default the module uses the published builder image:
+
+`ghcr.io/robertderose/nix-apple-container-builder:builder-latest`
 
 The module also persists a local NAR metadata cache under
 `~/.local/state/container-builder/cache` and mounts it into the container at
@@ -117,6 +125,20 @@ What it cannot fully handle:
 - the module can reconcile builder containers and launch-agent wiring, but it cannot guarantee the Apple runtime substrate is always healthy
 
 In practice, this means the module is close to idempotent for the configuration it owns, but not perfectly idempotent for every possible runtime failure inside Apple `container`.
+
+## Builder Image
+
+The default builder image extends `docker.io/nixos/nix:latest` and preinstalls
+`util-linux` so the guest has `mount` available at startup for the `/nix`
+overlay mount.
+
+The publish workflow pushes image tags to GHCR on changes under
+`images/builder/**` or on manual dispatch.
+
+Expected tags:
+
+- `ghcr.io/robertderose/nix-apple-container-builder:builder-latest`
+- `ghcr.io/robertderose/nix-apple-container-builder:builder-<git-sha>`
 
 ## Verification And Recovery
 
