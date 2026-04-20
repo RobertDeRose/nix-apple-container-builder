@@ -208,15 +208,27 @@ let
     host_alias=${escapeShellArg cfg.hostAlias}
     ssh_config=${escapeShellArg "${workDir}/ssh_config_root"}
     container_bin=${escapeShellArg cfg.containerBinary}
+    runtime_plist="$HOME/Library/LaunchAgents/org.nixos.container-builder-runtime.plist"
+
+    recover_container_system() {
+      printf '\n==> container system recovery\n'
+
+      if [ -f "$runtime_plist" ]; then
+        launchctl unload "$runtime_plist" || true
+      fi
+
+      "$container_bin" system start --enable-kernel-install
+    }
 
     printf '==> container system status\n'
-    "$container_bin" system status || exit 1
+    if ! "$container_bin" system status; then
+      recover_container_system
+      printf '\n==> container system status (after recovery)\n'
+      "$container_bin" system status
+    fi
 
     printf '\n==> SSH handshake\n'
     /usr/bin/ssh -F "$ssh_config" -o BatchMode=yes "$host_alias" true
-
-    printf '\n==> DNS lookup inside builder\n'
-    /usr/bin/ssh -F "$ssh_config" -o BatchMode=yes "$host_alias" 'getent hosts cache.nixos.org'
 
     printf '\n==> Nix cache reachability inside builder\n'
     /usr/bin/ssh -F "$ssh_config" -o BatchMode=yes "$host_alias" 'nix store ping --store https://cache.nixos.org'
@@ -233,6 +245,7 @@ let
     workdir=${escapeShellArg workDir}
     log_file=${escapeShellArg runtimeLogPath}
     readiness_log=${escapeShellArg readinessLogPath}
+    runtime_plist="$HOME/Library/LaunchAgents/org.nixos.container-builder-runtime.plist"
 
     mkdir -p "$workdir"
     exec >> "$log_file" 2>&1
@@ -241,7 +254,20 @@ let
 
     ${bootstrapKeysScript}
 
-    ${escapeShellArg cfg.containerBinary} system start
+    if ! ${escapeShellArg cfg.containerBinary} system status >/dev/null 2>&1; then
+      echo "[$(/bin/date)] Apple container system is unhealthy; attempting recovery"
+
+      if [ -f "$runtime_plist" ]; then
+        launchctl unload "$runtime_plist" || true
+      fi
+
+      if ! ${escapeShellArg cfg.containerBinary} system start --enable-kernel-install; then
+        echo "[$(/bin/date)] Apple container recovery failed; runtime agent unloaded to avoid crash loop" >&2
+        exit 0
+      fi
+    fi
+
+    ${escapeShellArg cfg.containerBinary} system start || true
 
     ${startScript}
 

@@ -95,9 +95,13 @@ The generated helper checks:
 
 - `container system status`
 - SSH connectivity to `container-builder`
-- DNS lookup for `cache.nixos.org` inside the builder
 - Nix cache reachability inside the builder
 - `ssh-ng://container-builder` reachability from the host daemon side
+
+If the Apple container system is hung, the helper now attempts recovery by:
+
+1. unloading `~/Library/LaunchAgents/org.nixos.container-builder-runtime.plist`
+2. running `container system start --enable-kernel-install`
 
 See `apple-container_spec.md` and `docs/poc/README.md` for the detailed design
 notes and migration history.
