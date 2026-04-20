@@ -483,7 +483,7 @@ in
 
     environment.etc."ssh/ssh_config.d/201-container-builder.conf".source = rootSshConfig;
 
-    system.activationScripts.containerBuilder.text = ''
+    system.activationScripts.extraActivation.text = mkAfter ''
       if [ ! -x ${escapeShellArg containerExecutable} ] || ! ${escapeShellArg containerExecutable} --version 2>/dev/null | /usr/bin/grep -q ${escapeShellArg cfg.installer.version}; then
         echo "installing Apple container ${cfg.installer.version} from official pkg..." >&2
         /usr/sbin/installer -pkg ${escapeShellArg containerInstallerPkg} -target /
