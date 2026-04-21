@@ -18,6 +18,7 @@ Current design highlights:
 - configures container DNS explicitly for cache resolution
 - waits for a real SSH handshake before considering the builder ready
 - wakes the builder on demand and relays SSH directly to the current container IP
+- runs idle shutdown from inside the guest so active Nix builds do not depend on host-side process inspection
 
 ## Module
 
@@ -172,6 +173,11 @@ The helper's user-side SSH path uses `ProxyCommand ${HOME}/.local/state/nac/prox
 to wake the builder and relay directly to the current container IP. The root
 daemon path can still use the localhost bridge, which remains the supported path
 for remote builds on the current host setup.
+
+When idle shutdown is enabled, the watchdog now runs inside the container rather
+than on the host. It keeps the builder alive while SSH sessions exist or while
+`nix-daemon` still has active descendant processes, then terminates `sshd` after
+the configured idle timeout so the container exits cleanly.
 
 The helper checks:
 
