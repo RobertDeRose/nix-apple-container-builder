@@ -47,8 +47,10 @@ let
   hostKeyPath = "${workDir}/ssh_host_ed25519_key";
   runtimeLogPath = "${workDir}/container-runtime.log";
   readinessLogPath = "${workDir}/container-readiness.log";
+  idleLogPath = "${workDir}/container-idle.log";
   runtimeLaunchPath = "${workDir}/runtime-launch.sh";
   bridgeLaunchPath = "${workDir}/bridge-launch.sh";
+  idleShutdownPath = "${workDir}/idle-shutdown.sh";
   containerInstallerPkg = pkgs.fetchurl {
     url = cfg.installer.url;
     hash = cfg.installer.hash;
@@ -300,6 +302,74 @@ let
     exec ${escapeShellArg cfg.containerBinary} rm -f ${escapeShellArg effectiveContainerName}
   '';
 
+  idleShutdownScript = pkgs.writeShellScript "container-builder-idle-shutdown" ''
+    set -euo pipefail
+
+    container_bin=${escapeShellArg cfg.containerBinary}
+    container_name=${escapeShellArg effectiveContainerName}
+    timeout_seconds=${escapeShellArg (toString cfg.idleShutdown.timeoutSeconds)}
+    log_file=${escapeShellArg idleLogPath}
+    pid_file=${escapeShellArg "${workDir}/idle-shutdown.pid"}
+    state_file=${escapeShellArg "${workDir}/idle-last-active"}
+
+    exec >> "$log_file" 2>&1
+
+    if [ -f "$pid_file" ]; then
+      existing_pid=$(cat "$pid_file" 2>/dev/null || true)
+      if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
+        echo "[$(/bin/date)] idle shutdown watchdog already running (pid=$existing_pid); exiting"
+        exit 0
+      fi
+    fi
+
+    printf '%s\n' "$$" > "$pid_file"
+    trap 'rm -f "$pid_file"' EXIT
+
+    echo "[$(/bin/date)] starting idle shutdown watchdog for $container_name"
+
+    /bin/date +%s > "$state_file"
+
+    while true; do
+      /bin/sleep 30
+
+      if ! "$container_bin" inspect "$container_name" >/dev/null 2>&1; then
+        echo "[$(/bin/date)] container not present; exiting idle watchdog"
+        exit 0
+      fi
+
+      if ! "$container_bin" inspect "$container_name" | ${pkgs.gnugrep}/bin/grep -q '"status"[[:space:]]*:[[:space:]]*"running"'; then
+        echo "[$(/bin/date)] container no longer running; exiting idle watchdog"
+        exit 0
+      fi
+
+      active_ssh=$(
+        "$container_bin" exec -i "$container_name" sh -c "ps -eo comm= 2>/dev/null | ${pkgs.gnugrep}/bin/grep -c '^sshd$' || true" 2>/dev/null || printf '0'
+      )
+
+      active_build=$(
+        "$container_bin" exec -i "$container_name" sh -c "ps -eo comm=,args= 2>/dev/null | ${pkgs.gnugrep}/bin/grep -E '(^| )nix-daemon( |$)|(^| )nix-store( |$)|(^| )nix-build( |$)|(^| )nix-shell( |$)|(^| )make( |$)|(^| )cargo( |$)|(^| )rustc( |$)|(^| )cc( |$)|(^| )ld( |$)' | ${pkgs.gnugrep}/bin/grep -vc 'grep -E' || true" 2>/dev/null || printf '0'
+      )
+
+      if [ "''${active_ssh:-0}" -gt 1 ] || [ "''${active_build:-0}" -gt 0 ]; then
+        echo "[$(/bin/date)] builder active; sshd=$active_ssh build=$active_build"
+        /bin/date +%s > "$state_file"
+        continue
+      fi
+
+      last_active=$(cat "$state_file" 2>/dev/null || printf '0')
+      now=$(/bin/date +%s)
+      idle_for=$(( now - last_active ))
+
+      if [ "$idle_for" -lt "$timeout_seconds" ]; then
+        echo "[$(/bin/date)] builder idle for ${idle_for}s; waiting until ${timeout_seconds}s"
+        continue
+      fi
+
+      echo "[$(/bin/date)] builder idle; stopping $container_name"
+      exec ${stopScript}
+    done
+  '';
+
   helperScript = pkgs.writeShellScript "nac" ''
     set -euo pipefail
 
@@ -499,6 +569,7 @@ let
 
       case "$target" in
         runtime) logfile="$runtime_log" ;;
+        idle) logfile=${escapeShellArg idleLogPath} ;;
         readiness) logfile="$readiness_log" ;;
         bridge) logfile="$bridge_err_log" ;;
         bridge-out) logfile="$bridge_out_log" ;;
@@ -549,7 +620,7 @@ let
     }
 
     do_ssh() {
-      exec /usr/bin/ssh -F "$ssh_config" "$host_alias"
+      exec /usr/bin/ssh -F "$ssh_config" "$host_alias" "$@"
     }
 
     do_inspect() {
@@ -567,7 +638,7 @@ Usage: nac <command>
 
   status            Show builder status summary.
   repair            Verify builder health and attempt runtime recovery.
-  logs [target]     Show logs. Targets: runtime, readiness, bridge, bridge-out, boot.
+  logs [target]     Show logs. Targets: runtime, idle, readiness, bridge, bridge-out, boot.
   gc                Run nix garbage collection inside the builder.
   reset             Delete and recreate the overlay volume and local cache.
   restart           Restart the builder container.
@@ -587,7 +658,7 @@ EOF
       gc) do_gc ;;
       reset) do_reset ;;
       restart) do_restart ;;
-      ssh) do_ssh ;;
+      ssh) do_ssh "$@" ;;
       inspect) do_inspect ;;
       *) echo "unknown command: $command" >&2; exit 2 ;;
     esac
@@ -627,6 +698,10 @@ EOF
       echo "[$(/bin/date)] builder start script failed" >&2
       exit 1
     fi
+
+    ${optionalString cfg.idleShutdown.enable ''
+      ${pkgs.coreutils}/bin/nohup ${idleShutdownScript} >/dev/null 2>&1 &
+    ''}
 
     ${escapeShellArg cfg.containerBinary} inspect ${escapeShellArg effectiveContainerName} >> "$log_file" 2>&1 || true
     ${escapeShellArg cfg.containerBinary} logs --boot ${escapeShellArg effectiveContainerName} >> "$log_file" 2>&1 || true
@@ -857,10 +932,22 @@ in
       description = "Polling interval for builder SSH readiness checks.";
     };
 
+    idleShutdown.enable = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Stop the builder container automatically after a period with no SSH sessions or build activity.";
+    };
+
+    idleShutdown.timeoutSeconds = mkOption {
+      type = types.ints.positive;
+      default = 300;
+      description = "How long the builder may remain idle before being stopped.";
+    };
+
     bridge.enable = mkOption {
       type = types.bool;
       default = true;
-      description = "Run a user launch agent with socat to bridge host SSH traffic into `container exec`.";
+      description = "Run a user launch agent with socat to bridge host SSH traffic into `container exec`. Disable this to use direct published ports.";
     };
   };
 
@@ -896,6 +983,7 @@ in
       ${pkgs.coreutils}/bin/install -m 0755 ${proxyScript} ${escapeShellArg "${workDir}/proxy.sh"}
       ${pkgs.coreutils}/bin/install -m 0755 ${startScript} ${escapeShellArg "${workDir}/start-container.sh"}
       ${pkgs.coreutils}/bin/install -m 0755 ${stopScript} ${escapeShellArg "${workDir}/stop-container.sh"}
+      ${pkgs.coreutils}/bin/install -m 0755 ${idleShutdownScript} ${escapeShellArg idleShutdownPath}
       ${pkgs.coreutils}/bin/install -m 0755 ${sshWrapperScript} ${escapeShellArg "${workDir}/ssh-wrapper.sh"}
       ${pkgs.coreutils}/bin/install -m 0755 ${runtimeLaunchScript} ${escapeShellArg runtimeLaunchPath}
       ${pkgs.coreutils}/bin/install -m 0755 ${bridgeLaunchScript} ${escapeShellArg bridgeLaunchPath}
@@ -908,6 +996,7 @@ in
         ${escapeShellArg "${workDir}/proxy.sh"} \
         ${escapeShellArg "${workDir}/start-container.sh"} \
         ${escapeShellArg "${workDir}/stop-container.sh"} \
+        ${escapeShellArg idleShutdownPath} \
         ${escapeShellArg "${workDir}/ssh-wrapper.sh"} \
         ${escapeShellArg runtimeLaunchPath} \
         ${escapeShellArg bridgeLaunchPath} \
