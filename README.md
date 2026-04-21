@@ -114,6 +114,7 @@ What it handles:
 - when relevant builder settings change, the derived generation changes too
 - stale older `nix-builder-*` generations are removed automatically
 - the persistent `/nix` overlay volume is generation-scoped so image/config changes get a fresh upper layer
+- stale older builder overlay volumes are removed automatically instead of being retained for rollback
 - the active container is stamped with its expected generation label and recreated if it drifts
 - the builder container is started as ephemeral with `--rm`
 

@@ -211,6 +211,24 @@ let
       esac
     done < <("$container_bin" list --all 2>/dev/null || true)
 
+    while IFS= read -r line; do
+      set -- $line
+      existing_volume="$1"
+
+      if [ -z "$existing_volume" ] || [ "$existing_volume" = "NAME" ]; then
+        continue
+      fi
+
+      case "$existing_volume" in
+        "$overlay_volume")
+          ;;
+        "$container_base"-nix-overlay-*)
+          echo "removing stale container-builder overlay volume $existing_volume"
+          "$container_bin" volume delete "$existing_volume" >/dev/null 2>&1 || true
+          ;;
+      esac
+    done < <("$container_bin" volume list 2>/dev/null || true)
+
     container_info="$($container_bin inspect "$container_name" 2>/dev/null || true)"
 
     if [ -n "$container_info" ]; then
