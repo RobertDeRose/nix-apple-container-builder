@@ -4,4 +4,7 @@ LABEL org.opencontainers.image.description="A Linux Builder for nix-darwin using
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.url="https://github.com"
 
-RUN nix --extra-experimental-features "nix-command flakes" profile add nixpkgs#util-linux
+ENV NIX_PATH=""
+
+RUN nix --extra-experimental-features "nix-command flakes" profile add nixpkgs#util-linux \
+ && mkdir -p /var/empty /run/sshd /etc/ssh /var/cache/nix/narinfo

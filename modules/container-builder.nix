@@ -47,6 +47,8 @@ let
   hostKeyPath = "${workDir}/ssh_host_ed25519_key";
   runtimeLogPath = "${workDir}/container-runtime.log";
   readinessLogPath = "${workDir}/container-readiness.log";
+  runtimeLaunchPath = "${workDir}/runtime-launch.sh";
+  bridgeLaunchPath = "${workDir}/bridge-launch.sh";
   containerInstallerPkg = pkgs.fetchurl {
     url = cfg.installer.url;
     hash = cfg.installer.hash;
@@ -69,6 +71,7 @@ let
 
   initScript = pkgs.writeShellScript "container-builder-init" ''
     set -e
+    unset NIX_PATH
     export PATH="/root/.nix-profile/bin:$PATH"
 
     overlay_root=${escapeShellArg overlayMountDir}
@@ -101,7 +104,6 @@ let
     trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
     narinfo-cache-positive-ttl = 3600
     narinfo-cache-negative-ttl = 60
-    narinfo-cache-dir = /var/cache/nix/narinfo
     EOF
 
     mkdir -p /var/cache/nix/narinfo
@@ -114,6 +116,8 @@ let
 
     mkdir -p /home/builder/.nix-profile/bin
     ln -sf /root/.nix-profile/bin/* /home/builder/.nix-profile/bin/ 2> /dev/null || true
+    mkdir -p /home/builder/.cache
+    chown -R 1000:1000 /home/builder
 
     mkdir -p /etc/ssh
     cp /config/ssh_host_ed25519_key /etc/ssh/
@@ -417,9 +421,25 @@ EOF
 
     ${escapeShellArg cfg.containerBinary} system start || true
 
-    ${startScript}
+    if ! ${startScript}; then
+      echo "[$(/bin/date)] builder start script failed" >&2
+      exit 1
+    fi
+
+    ${escapeShellArg cfg.containerBinary} inspect ${escapeShellArg effectiveContainerName} >> "$log_file" 2>&1 || true
+    ${escapeShellArg cfg.containerBinary} logs --boot ${escapeShellArg effectiveContainerName} >> "$log_file" 2>&1 || true
 
     ${readinessScript} >> "$readiness_log" 2>&1
+  '';
+
+  runtimeLaunchScript = pkgs.writeShellScript "container-builder-runtime-launch" ''
+    exec ${runtimeScript} "$@"
+  '';
+
+  bridgeLaunchScript = pkgs.writeShellScript "container-builder-bridge-launch" ''
+    exec ${pkgs.socat}/bin/socat \
+      TCP-LISTEN:${toString cfg.port},bind=${cfg.listenAddress},reuseaddr,fork \
+      EXEC:${workDir}/proxy.sh
   '';
 
   userSshConfig = pkgs.writeText "container-builder-ssh-config" ''
@@ -675,6 +695,8 @@ in
       ${pkgs.coreutils}/bin/install -m 0755 ${startScript} ${escapeShellArg "${workDir}/start-container.sh"}
       ${pkgs.coreutils}/bin/install -m 0755 ${stopScript} ${escapeShellArg "${workDir}/stop-container.sh"}
       ${pkgs.coreutils}/bin/install -m 0755 ${sshWrapperScript} ${escapeShellArg "${workDir}/ssh-wrapper.sh"}
+      ${pkgs.coreutils}/bin/install -m 0755 ${runtimeLaunchScript} ${escapeShellArg runtimeLaunchPath}
+      ${pkgs.coreutils}/bin/install -m 0755 ${bridgeLaunchScript} ${escapeShellArg bridgeLaunchPath}
       ${pkgs.coreutils}/bin/install -m 0755 ${statusScript} /usr/local/bin/container-builder-status
       ${pkgs.coreutils}/bin/install -m 0644 ${userSshConfig} ${escapeShellArg "${workDir}/ssh_config"}
       ${pkgs.coreutils}/bin/install -m 0644 ${rootSshConfig} ${escapeShellArg "${workDir}/ssh_config_root"}
@@ -685,6 +707,8 @@ in
         ${escapeShellArg "${workDir}/start-container.sh"} \
         ${escapeShellArg "${workDir}/stop-container.sh"} \
         ${escapeShellArg "${workDir}/ssh-wrapper.sh"} \
+        ${escapeShellArg runtimeLaunchPath} \
+        ${escapeShellArg bridgeLaunchPath} \
         ${escapeShellArg "${workDir}/ssh_config"} \
         ${escapeShellArg "${workDir}/ssh_config_root"}
 
@@ -697,11 +721,7 @@ in
       serviceConfig = {
         KeepAlive = true;
         RunAtLoad = true;
-        ProgramArguments = [
-          "${pkgs.socat}/bin/socat"
-          "TCP-LISTEN:${toString cfg.port},bind=${cfg.listenAddress},reuseaddr,fork"
-          "EXEC:${workDir}/proxy.sh"
-        ];
+        ProgramArguments = [ bridgeLaunchPath ];
         StandardErrorPath = "${workDir}/socat-bridge.err.log";
         StandardOutPath = "${workDir}/socat-bridge.out.log";
         WorkingDirectory = workDir;
@@ -711,7 +731,7 @@ in
 
     launchd.user.agents.container-builder-runtime = mkIf cfg.autoStart {
       serviceConfig = {
-        ProgramArguments = [ "${runtimeScript}" ];
+        ProgramArguments = [ runtimeLaunchPath ];
         KeepAlive = true;
         RunAtLoad = true;
         ProcessType = "Background";
