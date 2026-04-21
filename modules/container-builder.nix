@@ -73,11 +73,12 @@ let
 
     # Preserve the image's built-in /nix as the lower layer and keep builder
     # writes in a persistent Apple container volume mounted at $overlay_root.
-    mkdir -p "$overlay_root/upper" /nix-lower
+    mkdir -p "$overlay_root/upper" /nix-lower /nix-merged
     rm -rf "$overlay_root/work"
     mkdir -p "$overlay_root/work"
     mount --bind /nix /nix-lower
-    mount -t overlay overlay -o "lowerdir=/nix-lower,upperdir=$overlay_root/upper,workdir=$overlay_root/work" /nix
+    mount -t overlay overlay -o "lowerdir=/nix-lower,upperdir=$overlay_root/upper,workdir=$overlay_root/work" /nix-merged
+    mount --move /nix-merged /nix
 
     if ! id builder > /dev/null 2>&1; then
       echo "builder:x:1000:1000:builder:/home/builder:/bin/sh" >> /etc/passwd
