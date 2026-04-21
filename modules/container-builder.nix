@@ -9,6 +9,8 @@ let
   cfg = config.services.container-builder;
   owner = cfg.user;
   overlayMountDir = "/nix-overlay";
+  overlayUpperDir = "${overlayMountDir}/upper-${containerVersion}";
+  overlayWorkDir = "${overlayMountDir}/work-${containerVersion}";
   containerConfigSpec = pkgs.writeText "container-builder-config.json" (builtins.toJSON {
     inherit owner;
     containerName = cfg.containerName;
@@ -31,7 +33,7 @@ let
     maxJobs = cfg.maxJobs;
     speedFactor = cfg.speedFactor;
     autoStart = cfg.autoStart;
-    inherit overlayMountDir;
+    inherit overlayMountDir overlayUpperDir overlayWorkDir;
   });
   containerVersion = builtins.substring 0 12 (builtins.baseNameOf containerConfigSpec);
   effectiveContainerName = "${cfg.containerName}-${containerVersion}";
@@ -70,14 +72,16 @@ let
     export PATH="/root/.nix-profile/bin:$PATH"
 
     overlay_root=${escapeShellArg overlayMountDir}
+    overlay_upper=${escapeShellArg overlayUpperDir}
+    overlay_work=${escapeShellArg overlayWorkDir}
 
     # Preserve the image's built-in /nix as the lower layer and keep builder
     # writes in a persistent Apple container volume mounted at $overlay_root.
-    mkdir -p "$overlay_root/upper" /nix-lower /nix-merged
-    rm -rf "$overlay_root/work"
-    mkdir -p "$overlay_root/work"
+    mkdir -p "$overlay_root" "$overlay_upper" /nix-lower /nix-merged
+    rm -rf "$overlay_work"
+    mkdir -p "$overlay_work"
     mount --bind /nix /nix-lower
-    mount -t overlay overlay -o "lowerdir=/nix-lower,upperdir=$overlay_root/upper,workdir=$overlay_root/work" /nix-merged
+    mount -t overlay overlay -o "lowerdir=/nix-lower,upperdir=$overlay_upper,workdir=$overlay_work" /nix-merged
     mount --move /nix-merged /nix
 
     if ! id builder > /dev/null 2>&1; then
