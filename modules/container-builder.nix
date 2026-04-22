@@ -20,7 +20,6 @@ let
   containerScriptVersion = "2026-04-22-guest-watchdog-1";
 
   workDir = cfg.workingDirectory;
-  cacheDir = "${workDir}/cache";
   containerExecutable = "/usr/local/bin/container";
   sshKeyPath = "${workDir}/builder_ed25519";
   hostKeyPath = "${workDir}/ssh_host_ed25519_key";
@@ -322,7 +321,6 @@ let
       -m ${escapeShellArg cfg.memory}
       -v ${escapeShellArg "${workDir}:/config"}
       -v ${escapeShellArg "${overlayVolumeName}:${overlayMountDir}"}
-      -v ${escapeShellArg "${cacheDir}:/var/cache/nix/narinfo"}
     )
 
     ${optionalString (cfg.dns.servers != [ ]) ''
@@ -618,8 +616,6 @@ let
       "$container_bin" volume create \
         --label ${escapeShellArg "org.nixos.container-builder.store=true"} \
         "$overlay_volume" >/dev/null
-      ${pkgs.coreutils}/bin/rm -rf ${escapeShellArg cacheDir}
-      ${pkgs.coreutils}/bin/mkdir -p ${escapeShellArg cacheDir}
       ${startScript}
       ${readinessScript}
       render_status
@@ -653,7 +649,7 @@ Usage: nac <command>
   repair            Verify builder health and attempt runtime recovery.
   logs [target]     Show logs. Targets: runtime, idle, readiness, bridge, bridge-out, boot.
   gc                Run nix garbage collection inside the builder.
-  reset             Delete and recreate the overlay volume and local cache.
+  reset             Delete and recreate the overlay volume.
   restart           Restart the builder container.
   ssh               Open an SSH session to the builder.
   inspect           Show raw launchd and container inspection data.
@@ -819,7 +815,7 @@ in
     workingDirectory = mkOption {
       type = types.str;
       default = "/Users/${owner}/.local/state/nac";
-      description = "Directory holding keys, helper scripts, and bridge logs.";
+      description = "Directory holding persistent builder state such as keys, generated helper scripts, and logs.";
     };
 
     user = mkOption {
@@ -1007,11 +1003,8 @@ in
       fi
 
       ${pkgs.coreutils}/bin/mkdir -p ${escapeShellArg workDir}
-      ${pkgs.coreutils}/bin/mkdir -p ${escapeShellArg cacheDir}
       /usr/sbin/chown ${escapeShellArg owner}:staff ${escapeShellArg workDir}
-      /usr/sbin/chown ${escapeShellArg owner}:staff ${escapeShellArg cacheDir}
       /bin/chmod 0700 ${escapeShellArg workDir}
-      /bin/chmod 0700 ${escapeShellArg cacheDir}
       ${pkgs.coreutils}/bin/install -m 0755 ${bootstrapKeysScript} ${escapeShellArg "${workDir}/bootstrap-keys.sh"}
       ${pkgs.coreutils}/bin/install -m 0755 ${initScript} ${escapeShellArg "${workDir}/init.sh"}
       ${pkgs.coreutils}/bin/install -m 0755 ${proxyScript} ${escapeShellArg "${workDir}/proxy.sh"}
