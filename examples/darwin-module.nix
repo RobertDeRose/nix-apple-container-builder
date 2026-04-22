@@ -2,7 +2,7 @@
 {
   imports = [
     # Add this module from your flake inputs:
-    # inputs.apple-container-builder.darwinModules.default
+    # inputs.hexbox.darwinModules.default
   ];
 
   services.container-builder = {

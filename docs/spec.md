@@ -1,4 +1,4 @@
-# Apple Container Builder Spec
+# HexBox Spec
 
 ## Current State
 
@@ -6,19 +6,19 @@
 - It declares:
   - `nix.buildMachines`
   - SSH config for `container-builder`
-  - helper scripts in `/Users/<username>/.local/state/nac`
+  - helper scripts in `/Users/<username>/.local/state/hb`
   - a runtime user agent and optional bridge user agent
   - readiness checks before considering startup successful
   - idempotent builder start and generation-aware container recreation
   - a persistent `/nix` overlay volume for the guest store
   - guest-side idle shutdown based on active SSH sessions
-- The default image is `ghcr.io/robertderose/nix-apple-container-builder:builder-latest`.
-- The user-side SSH path wakes the builder on demand with `ProxyCommand ~/.local/state/nac/proxy.sh`.
+- The default image is `ghcr.io/robertderose/nix-hex-box:builder-latest`.
+- The user-side SSH path wakes the builder on demand with `ProxyCommand ~/.local/state/hb/proxy.sh`.
 - The root `nix-daemon` path still uses the localhost bridge as the compatible transport for daemon-driven builds.
 
 ## Runtime Model
 
-- Durable state lives under `/Users/<username>/.local/state/nac`.
+- Durable state lives under `/Users/<username>/.local/state/hb`.
 - The builder container is generation-stamped and reused across restarts when possible.
 - `/nix` inside the guest is an overlay mount:
   - lower layer from the image
@@ -28,21 +28,23 @@
 
 ## Operational Notes
 
-- Main helper entrypoint: `nac`
-- Important generated files live in `~/.local/state/nac/`, including:
+- Main helper entrypoint: `hb`
+- Important generated files live in `~/.local/state/hb/`, including:
   - `init.sh`
   - `proxy.sh`
   - `start-container.sh`
   - `stop-container.sh`
   - `ssh_config`
   - `ssh_config_root`
-  - `container-runtime.log`
-  - `container-readiness.log`
-  - `container-builder-idle.log`
+  - `hexbox-runtime.log`
+  - `hexbox-readiness.log`
+  - `hexbox-idle.log`
   - `init-debug.log`
+  - `hexbox-runner`
+  - `hexbox-bridge`
 - Typical health checks:
-  - `nac status`
-  - `nac repair`
+  - `hb status`
+  - `hb repair`
   - `ssh container-builder true`
   - `nix store ping --store ssh-ng://container-builder`
 

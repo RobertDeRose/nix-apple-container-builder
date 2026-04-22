@@ -1,24 +1,24 @@
-# nix-apple-container-builder
+# HexBox
 
 <p align="center">
-  <img src="assets/logo.png" alt="nix-apple-container-builder logo" width="240" />
+  <img src="assets/logo.png" alt="HexBox logo" width="240" />
 </p>
 
-`nix-apple-container-builder` is a `nix-darwin` module that configures an
-Apple Container based `aarch64-linux` remote builder for Nix.
+`nix-hex-box` is a `nix-darwin` module that configures an Apple Container based
+`aarch64-linux` remote builder for Nix.
 
 Current design highlights:
 
 - installs Apple `container` from the official signed GitHub release package
 - configures `nix.buildMachines` for `ssh-ng://container-builder`
 - uses a published GHCR builder image with overlay mount tooling preinstalled
-- manages durable builder state under `~/.local/state/nac`
+- manages durable builder state under `~/.local/state/hb`
 - installs launch agents for the container runtime and the optional host-side SSH bridge
-- uses direct `ProxyCommand` via `~/.local/state/nac/proxy.sh` for user-side helper access, while the localhost bridge remains the compatible path for the root `nix-daemon`
+- uses direct `ProxyCommand` via `~/.local/state/hb/proxy.sh` for user-side helper access, while the localhost bridge remains the compatible path for the root `nix-daemon`
 - configures container DNS explicitly for cache resolution
 - waits for a real SSH handshake before considering the builder ready
 - wakes the builder on demand and relays SSH directly to the current container IP
-- supports guest-side idle shutdown with in-container logging under `~/.local/state/nac/container-builder-idle.log`
+- supports guest-side idle shutdown with in-container logging under `~/.local/state/hb/hexbox-idle.log`
 
 ## Module
 
@@ -34,13 +34,13 @@ GitHub Actions workflow that publishes it to GHCR.
 
 ```nix
 {
-  inputs.apple-container-builder.url = "github:RobertDeRose/nix-apple-container-builder";
+  inputs.hexbox.url = "github:RobertDeRose/nix-hex-box";
 
   outputs = inputs: {
     darwinConfigurations.my-host = inputs.darwin.lib.darwinSystem {
       system = "aarch64-darwin";
       modules = [
-        inputs.apple-container-builder.darwinModules.default
+        inputs.hexbox.darwinModules.default
         {
           services.container-builder = {
             enable = true;
@@ -62,31 +62,22 @@ This module is functional but still in progress.
 
 Known open areas:
 
-- live runtime verification on a real machine
-- possible direct port publishing instead of `socat`
-- on-demand lifecycle
+- possible direct port publishing instead of the host bridge for the root daemon path
 - broader validation of when bridge-free operation is safe for daemon-driven builds
 
 ## DNS
 
-The module now exposes container DNS settings directly and defaults to public
+The module exposes container DNS settings directly and defaults to public
 recursive resolvers so the builder can resolve `cache.nixos.org`.
 
-The builder keeps the container itself ephemeral, but now mounts a persistent
-Apple container volume and overlays `/nix` inside the guest. The image's built-in
+The builder keeps the container generation-aware, but mounts a persistent Apple
+container volume and overlays `/nix` inside the guest. The image's built-in
 `/nix` stays as the lower layer while builder writes land in a persistent
 overlay upper layer stored in that volume.
 
 By default the module uses the published builder image:
 
-`ghcr.io/robertderose/nix-apple-container-builder:builder-latest`
-
-File placement follows a state-focused layout:
-
-- `~/.local/state/nac`
-  - persistent SSH keys
-  - activation-managed helper scripts and SSH configs
-  - runtime and bridge logs
+`ghcr.io/robertderose/nix-hex-box:builder-latest`
 
 Available options:
 
@@ -130,8 +121,6 @@ What it cannot fully handle:
 - first-run Apple runtime bootstrap may still require operational recovery
 - the module can reconcile builder containers and launch-agent wiring, but it cannot guarantee the Apple runtime substrate is always healthy
 
-In practice, this means the module is close to idempotent for the configuration it owns, but not perfectly idempotent for every possible runtime failure inside Apple `container`.
-
 ## Builder Image
 
 The default builder image extends `docker.io/nixos/nix:latest` and preinstalls
@@ -143,43 +132,43 @@ The publish workflow pushes image tags to GHCR on changes under
 
 Expected tags:
 
-- `ghcr.io/robertderose/nix-apple-container-builder:builder-latest`
-- `ghcr.io/robertderose/nix-apple-container-builder:builder-<git-sha>`
+- `ghcr.io/robertderose/nix-hex-box:builder-latest`
+- `ghcr.io/robertderose/nix-hex-box:builder-<git-sha>`
 
 ## Verification And Recovery
 
 After activation, the main helper entrypoint is:
 
 ```bash
-nac status
+hb status
 ```
 
 For full verification and recovery-aware checks, use:
 
 ```bash
-nac repair
+hb repair
 ```
 
 The helper supports:
 
-- `nac status`
-- `nac repair`
-- `nac logs [runtime|readiness|bridge|bridge-out|boot]`
-- `nac gc`
-- `nac reset`
-- `nac restart`
-- `nac ssh`
-- `nac inspect`
+- `hb status`
+- `hb repair`
+- `hb logs [runtime|readiness|bridge|bridge-out|boot|idle]`
+- `hb gc`
+- `hb reset`
+- `hb restart`
+- `hb ssh`
+- `hb inspect`
 
-The helper's user-side SSH path uses `ProxyCommand ${HOME}/.local/state/nac/proxy.sh`
+The helper's user-side SSH path uses `ProxyCommand ${HOME}/.local/state/hb/proxy.sh`
 to wake the builder and relay directly to the current container IP. The root
 daemon path can still use the localhost bridge, which remains the supported path
 for remote builds on the current host setup.
 
 When idle shutdown is enabled, the watchdog runs inside the container and logs
-its decisions to `~/.local/state/nac/container-builder-idle.log`. It resets its
-timer whenever active SSH sessions exist and terminates `sshd` after the
-configured idle timeout.
+its decisions to `~/.local/state/hb/hexbox-idle.log`. It resets its timer
+whenever active SSH sessions exist and terminates `sshd` after the configured
+idle timeout.
 
 The helper checks:
 
@@ -191,22 +180,12 @@ The helper checks:
 
 If the Apple container system is hung, the helper attempts recovery by:
 
-1. unloading `~/Library/LaunchAgents/org.nixos.container-builder-runtime.plist`
+1. unloading `~/Library/LaunchAgents/org.nixos.hexbox-runtime.plist`
 2. running `container system start --enable-kernel-install`
-3. reloading `~/Library/LaunchAgents/org.nixos.container-builder-runtime.plist`
+3. reloading `~/Library/LaunchAgents/org.nixos.hexbox-runtime.plist`
 
-The runtime launch agent also tries to avoid a hard crash loop. If it detects that Apple `container` is unhealthy, it attempts recovery once and exits cleanly instead of repeatedly hammering launchd.
-
-What this recovery can do:
-
-- restore Apple `container` after a hung apiserver/bootstrap state
-- stop the module's own runtime launch agent from thrashing while recovery is attempted
-- re-enable the runtime launch agent after successful recovery
-
-What it cannot do:
-
-- guarantee Apple `container` will always recover automatically
-- fix every possible launchd/XPC/vmnet failure without user involvement
-- replace upstream runtime debugging when Apple `container` itself is broken
+The runtime launch agent also tries to avoid a hard crash loop. If it detects
+that Apple `container` is unhealthy, it attempts recovery once and exits
+cleanly instead of repeatedly hammering launchd.
 
 See `docs/spec.md` for the detailed design notes.
