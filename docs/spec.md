@@ -11,7 +11,7 @@
   - readiness checks before considering startup successful
   - idempotent builder start and generation-aware container recreation
   - guest-side idle shutdown based on active SSH sessions
-- The default image is `ghcr.io/robertderose/nix-hex-box:builder-latest`.
+- The default image is `docker.io/nixos/nix:2.34.6`.
 - The user-side SSH path wakes the builder on demand with `ProxyCommand ~/.local/state/hb/proxy.sh`.
 - The root `nix-daemon` path still uses the localhost bridge as the compatible transport for daemon-driven builds.
 
@@ -20,6 +20,7 @@
 - Durable state lives under `/Users/<username>/.local/state/hb`.
 - The builder container is generation-stamped and reused across restarts when possible.
 - `/nix` inside the guest uses the image's built-in store directly. Build outputs live in the container's writable layer and are lost on container recreation, but are re-fetched from cache as needed.
+- When idle shutdown is enabled, `procps` is installed lazily in the background on first boot so the watchdog can use `ps` without delaying SSH startup.
 - The watchdog runs inside the guest, checks `ps -ef | grep 'sshd-sessio[n]'`, and stops `sshd` after the configured idle timeout.
 - Once idle shutdown fires, the builder remains offline until the proxy path or helper starts it again.
 

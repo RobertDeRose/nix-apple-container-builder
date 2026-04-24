@@ -11,7 +11,7 @@ Current design highlights:
 
 - installs Apple `container` from the official signed GitHub release package
 - configures `nix.buildMachines` for `ssh-ng://container-builder`
-- uses a published GHCR builder image
+- pulls a pinned upstream `nixos/nix` builder image
 - manages durable builder state under `~/.local/state/hb`
 - installs launch agents for the container runtime and the optional host-side SSH bridge
 - uses direct `ProxyCommand` via `~/.local/state/hb/proxy.sh` for user-side helper access, while the localhost bridge remains the compatible path for the root `nix-daemon`
@@ -27,8 +27,8 @@ The flake exports:
 - `darwinModules.default`
 - `darwinModules.container-builder`
 
-The repo also contains a builder image definition under `images/builder` and a
-GitHub Actions workflow that publishes it to GHCR.
+The repo also contains a scheduled workflow that updates the pinned Apple
+Container installer version and upstream `nixos/nix` image tag.
 
 ## Example
 
@@ -74,9 +74,14 @@ The builder keeps the container generation-aware. The image's built-in `/nix`
 is used directly; build outputs live in the container's writable layer and are
 re-fetched from substituters if the container is recreated.
 
-By default the module uses the published builder image:
+By default the module uses the upstream builder image:
 
-`ghcr.io/robertderose/nix-hex-box:builder-latest`
+`docker.io/nixos/nix:2.34.6`
+
+Available image version options:
+
+- `services.container-builder.imageRepository`
+- `services.container-builder.nixVersion`
 
 Available options:
 
@@ -122,16 +127,9 @@ What it cannot fully handle:
 
 ## Builder Image
 
-The default builder image extends `docker.io/nixos/nix:latest` and preinstalls
-`procps` for idle session detection.
-
-The publish workflow pushes image tags to GHCR on changes under
-`images/builder/**` or on manual dispatch.
-
-Expected tags:
-
-- `ghcr.io/robertderose/nix-hex-box:builder-latest`
-- `ghcr.io/robertderose/nix-hex-box:builder-<git-sha>`
+The module now uses the upstream `nixos/nix` image directly. When idle
+shutdown is enabled, `procps` is installed lazily in the background on first
+boot so the watchdog can use `ps` without blocking container startup.
 
 ## Verification And Recovery
 

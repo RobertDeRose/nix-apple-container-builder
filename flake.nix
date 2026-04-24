@@ -23,10 +23,8 @@
         darwinModules.container-builder = import ./modules/container-builder.nix;
       };
 
-      perSystem =
-        { pkgs, ... }:
-        {
-          formatter = pkgs.nixfmt;
-        };
+      perSystem = { pkgs, ... }: {
+        formatter = pkgs.nixfmt;
+      };
     };
 }

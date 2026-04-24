@@ -13,10 +13,11 @@ let
   bridgeAgentName = "hexbox-bridge";
   runtimeAgentLabel = "org.nixos.${runtimeAgentName}";
   bridgeAgentLabel = "org.nixos.${bridgeAgentName}";
-  containerScriptVersion = "2026-04-24-drop-overlay-1";
+  containerScriptVersion = "2026-04-24-upstream-image-1";
 
   workDir = cfg.workingDirectory;
   containerExecutable = "/usr/local/bin/container";
+  effectiveImage = "${cfg.imageRepository}:${cfg.nixVersion}";
   sshKeyPath = "${workDir}/builder_ed25519";
   hostKeyPath = "${workDir}/ssh_host_ed25519_key";
   runtimeLogPath = "${workDir}/hexbox-runtime.log";
@@ -50,7 +51,7 @@ let
     exec > /config/init-debug.log 2>&1
     set -x
     unset NIX_PATH
-    export PATH="/root/.nix-profile/bin:$PATH"
+    export PATH="/root/.nix-profile/bin:/bin:/sbin:/usr/bin:/usr/local/bin:$PATH"
 
     if ! id builder > /dev/null 2>&1; then
       echo "builder:x:1000:1000:builder:/home/builder:/bin/sh" >> /etc/passwd
@@ -79,8 +80,6 @@ let
     chmod 600 /home/builder/.ssh/authorized_keys
     chown -R 1000:1000 /home/builder/.ssh
 
-    mkdir -p /home/builder/.nix-profile/bin
-    ln -sf /root/.nix-profile/bin/* /home/builder/.nix-profile/bin/ 2> /dev/null || true
     mkdir -p /home/builder/.cache
     chown -R 1000:1000 /home/builder
 
@@ -107,8 +106,8 @@ let
     UsePAM no
     PrintMotd no
     AcceptEnv LANG LC_*
-    SetEnv PATH=/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin:/usr/sbin:/sbin
-    Subsystem sftp /root/.nix-profile/libexec/sftp-server
+    SetEnv PATH=/root/.nix-profile/bin:/bin:/sbin:/usr/bin:/usr/local/bin
+    Subsystem sftp internal-sftp
     MaxStartups 64:30:128
     MaxSessions 64
     EOF
@@ -117,9 +116,7 @@ let
     cat > /usr/local/bin/hexbox-idle-watchdog << 'EOF'
     #!/bin/sh
     set -eu
-    coreutils_bin=/root/.nix-profile/bin
-    ps_bin=/root/.nix-profile/bin
-    grep_bin=/root/.nix-profile/bin
+    export PATH="/root/.nix-profile/bin:/bin:/sbin:/usr/bin:/usr/local/bin:$PATH"
 
     timeout_seconds=${toString cfg.idleShutdown.timeoutSeconds}
     interval_seconds=30
@@ -129,12 +126,17 @@ let
     touch "$log_file"
     exec >> "$log_file" 2>&1
     set -x
-    echo "[$($coreutils_bin/date)] idle watchdog started (timeout=${toString cfg.idleShutdown.timeoutSeconds}s)"
+    echo "[$(date)] idle watchdog started (timeout=${toString cfg.idleShutdown.timeoutSeconds}s)"
+
+    while ! command -v ps >/dev/null 2>&1; do
+      echo "[$(date)] waiting for procps installation"
+      sleep 5
+    done
 
     while true; do
-      "$coreutils_bin/sleep" "$interval_seconds"
+      sleep "$interval_seconds"
 
-      if "$ps_bin/ps" -ef | "$grep_bin/grep" -q 'sshd-sessio[n]'; then
+      if ps -ef | grep -q 'sshd-sessio[n]'; then
         ssh_sessions=1
       else
         ssh_sessions=0
@@ -142,26 +144,32 @@ let
 
       if [ "$ssh_sessions" -gt 0 ]; then
         idle_seconds=0
-        echo "[$($coreutils_bin/date)] active ssh sessions detected (count=$ssh_sessions); resetting idle timer"
+        echo "[$(date)] active ssh sessions detected (count=$ssh_sessions); resetting idle timer"
         continue
       fi
 
       idle_seconds=$(( idle_seconds + interval_seconds ))
-      echo "[$($coreutils_bin/date)] no active ssh sessions (count=$ssh_sessions); idle=$idle_seconds s"
+      echo "[$(date)] no active ssh sessions (count=$ssh_sessions); idle=$idle_seconds s"
 
       if [ "$idle_seconds" -lt "$timeout_seconds" ]; then
         continue
       fi
 
-      echo "[$($coreutils_bin/date)] idle timeout reached; stopping sshd"
-      sshd_pid=$("$coreutils_bin/cat" /run/sshd/sshd.pid 2>/dev/null || true)
-      if [ -n "$sshd_pid" ] && "$coreutils_bin/kill" -0 "$sshd_pid" 2>/dev/null; then
-        "$coreutils_bin/kill" -TERM "$sshd_pid"
+      echo "[$(date)] idle timeout reached; stopping sshd"
+      sshd_pid=$(cat /run/sshd/sshd.pid 2>/dev/null || true)
+      if [ -n "$sshd_pid" ] && kill -0 "$sshd_pid" 2>/dev/null; then
+        kill -TERM "$sshd_pid"
       fi
       exit 0
     done
     EOF
     chmod +x /usr/local/bin/hexbox-idle-watchdog
+
+    ${optionalString cfg.idleShutdown.enable ''
+      if ! command -v ps >/dev/null 2>&1; then
+        sh -c 'until nix --extra-experimental-features "nix-command flakes" profile install --profile /root/.nix-profile nixpkgs#procps; do sleep 10; done' >/config/procps-install.log 2>&1 &
+      fi
+    ''}
 
     echo "starting nix-daemon"
     nix-daemon &
@@ -172,7 +180,7 @@ let
       echo "started idle watchdog pid=$!"
     ''}
     echo "starting sshd"
-    exec /root/.nix-profile/bin/sshd -D -e
+    exec sshd -D -e
   '';
 
   proxyScript = pkgs.writeShellScript "hexbox-proxy" ''
@@ -326,7 +334,7 @@ let
     ''}
 
     args+=(
-      ${escapeShellArg cfg.image}
+      ${escapeShellArg effectiveImage}
       sh
       -c
       ${escapeShellArg "sh /config/init.sh"}
@@ -732,7 +740,9 @@ let
       port = cfg.port;
       containerPort = cfg.containerPort;
       workingDirectory = cfg.workingDirectory;
-      image = cfg.image;
+      image = effectiveImage;
+      imageRepository = cfg.imageRepository;
+      nixVersion = cfg.nixVersion;
       cpus = cfg.cpus;
       memory = cfg.memory;
       dns = cfg.dns;
@@ -828,10 +838,16 @@ in
       description = "Name of the Apple container used for Linux builds.";
     };
 
-    image = mkOption {
+    imageRepository = mkOption {
       type = types.str;
-      default = "ghcr.io/robertderose/nix-hex-box:builder-latest";
-      description = "OCI image used for the Linux builder container.";
+      default = "docker.io/nixos/nix";
+      description = "OCI repository used for the Linux builder container image.";
+    };
+
+    nixVersion = mkOption {
+      type = types.str;
+      default = "2.34.6";
+      description = "Version tag of the upstream `nixos/nix` container image used for the builder.";
     };
 
     cpus = mkOption {

@@ -1,0 +1,124 @@
+name: Update Runtime Versions
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Check for runtime updates
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          module="modules/container-builder.nix"
+
+          current_container=$(grep 'installer.version' "$module" | grep -oP 'default = "\K[^"]+')
+          current_nix=$(grep 'nixVersion = mkOption' -A 2 "$module" | grep -oP 'default = "\K[^"]+')
+
+          latest_container=$(gh api repos/apple/container/releases/latest --jq '.tag_name')
+          latest_nix=$(curl -fsSL 'https://hub.docker.com/v2/repositories/nixos/nix/tags?page_size=25' | jq -r '.results[] | select(.name | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) | .name' | sort -V | tail -n 1)
+
+          updated=false
+          container_updated=false
+          nix_updated=false
+          summary_parts=()
+
+          if [ "$current_container" != "$latest_container" ]; then
+            new_url="https://github.com/apple/container/releases/download/${latest_container}/container-${latest_container}-installer-signed.pkg"
+            curl -fsSLo /tmp/container-installer.pkg "$new_url"
+            new_hash=$(nix hash file --sri /tmp/container-installer.pkg)
+            rm -f /tmp/container-installer.pkg
+
+            sed -i "s|container-${current_container}-installer-signed.pkg|container-${latest_container}-installer-signed.pkg|g" "$module"
+            sed -i "s|download/${current_container}/|download/${latest_container}/|g" "$module"
+
+            old_hash=$(grep 'installer.hash' "$module" | grep -oP 'default = "\K[^"]+')
+            sed -i "s|${old_hash}|${new_hash}|" "$module"
+            sed -i "/installer\.version/,/default =/{s|default = \"${current_container}\"|default = \"${latest_container}\"|}" "$module"
+            summary_parts+=("Apple Container ${current_container} to ${latest_container}")
+            container_updated=true
+            updated=true
+          fi
+
+          if [ "$current_nix" != "$latest_nix" ]; then
+            sed -i "/nixVersion = mkOption/,/description =/{s|default = \"${current_nix}\"|default = \"${latest_nix}\"|}" "$module"
+            summary_parts+=("nixos/nix ${current_nix} to ${latest_nix}")
+            nix_updated=true
+            updated=true
+          fi
+
+          if [ "${#summary_parts[@]}" -gt 0 ]; then
+            summary=${summary_parts[0]}
+            if [ "${#summary_parts[@]}" -gt 1 ]; then
+              for part in "${summary_parts[@]:1}"; do
+                summary="${summary} and ${part}"
+              done
+            fi
+            subject="fix: bump ${summary}"
+          else
+            subject="fix: bump runtime version defaults"
+          fi
+
+          echo "updated=$updated" >> "$GITHUB_OUTPUT"
+          echo "container_updated=$container_updated" >> "$GITHUB_OUTPUT"
+          echo "nix_updated=$nix_updated" >> "$GITHUB_OUTPUT"
+          echo "subject=$subject" >> "$GITHUB_OUTPUT"
+          echo "container_version=$latest_container" >> "$GITHUB_OUTPUT"
+          echo "nix_version=$latest_nix" >> "$GITHUB_OUTPUT"
+          echo "current_container_version=$current_container" >> "$GITHUB_OUTPUT"
+          echo "current_nix_version=$current_nix" >> "$GITHUB_OUTPUT"
+
+      - name: Verify module evaluates
+        if: steps.check.outputs.updated == 'true'
+        run: nix eval --json '.#darwinModules' --apply builtins.attrNames
+
+      - name: Create Pull Request
+        if: steps.check.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          branch=auto/runtime-version-update
+          subject='${{ steps.check.outputs.subject }}'
+
+          body_file=$(mktemp)
+          {
+            printf '%s\n' 'Automated update of default runtime versions.'
+            printf '\n'
+            if [ '${{ steps.check.outputs.container_updated }}' = 'true' ]; then
+              printf '%s\n' '- Apple Container: `${{ steps.check.outputs.current_container_version }}` -> `${{ steps.check.outputs.container_version }}`'
+            fi
+            if [ '${{ steps.check.outputs.nix_updated }}' = 'true' ]; then
+              printf '%s\n' '- nixos/nix: `${{ steps.check.outputs.current_nix_version }}` -> `${{ steps.check.outputs.nix_version }}`'
+            fi
+          } > "$body_file"
+
+          git checkout -B "$branch"
+          git add modules/container-builder.nix
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "$subject"
+          git push --force-with-lease --set-upstream origin "$branch"
+
+          pr_number=$(gh pr list --head "$branch" --json number --jq '.[0].number // empty')
+
+          if [ -n "$pr_number" ]; then
+            gh pr edit "$pr_number" --title "$subject" --body-file "$body_file"
+          else
+            gh pr create --base main --head "$branch" --title "$subject" --body-file "$body_file"
+          fi
