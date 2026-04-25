@@ -180,7 +180,7 @@ let
       echo "started idle watchdog pid=$!"
     ''}
     echo "starting sshd"
-    exec sshd -D -e
+    exec "$(command -v sshd)" -D -e
   '';
 
   proxyScript = pkgs.writeShellScript "hexbox-proxy" ''
