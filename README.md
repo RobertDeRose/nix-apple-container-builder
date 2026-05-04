@@ -150,8 +150,10 @@ docker ps
 
 The helper also exposes:
 
-- `hb socktainer-status`
-- `hb socktainer-logs [err|out]`
+- `hb socktainer status`
+- `hb socktainer logs`
+- `hb socktainer log --err`
+- `hb socktainer logs --out`
 
 To export `DOCKER_HOST` automatically for user sessions, set:
 

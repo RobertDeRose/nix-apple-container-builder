@@ -688,22 +688,76 @@ let
           printf '%-18s %s\n' 'docker host' "unix://$socktainer_socket"
         }
 
-        do_socktainer_logs() {
-          local target="''${1:-err}"
-          local logfile
-
-          case "$target" in
-            out) logfile=${escapeShellArg "${socktainerStateDirectory}/socktainer.out.log"} ;;
-            err) logfile=${escapeShellArg "${socktainerStateDirectory}/socktainer.err.log"} ;;
-            *) echo "unknown socktainer log target: $target" >&2; exit 2 ;;
-          esac
+        print_socktainer_logs() {
+          local logfile="$1"
+          local label="$2"
 
           if [ ! -f "$logfile" ]; then
             echo "log file not found: $logfile" >&2
             exit 1
           fi
 
-          exec ${pkgs.coreutils}/bin/tail -n 100 "$logfile"
+          printf '==> %s\n' "$label"
+          ${pkgs.coreutils}/bin/tail -n 100 "$logfile"
+        }
+
+        do_socktainer_logs() {
+          local target="''${1:-both}"
+          local err_log=${escapeShellArg "${socktainerStateDirectory}/socktainer.err.log"}
+          local out_log=${escapeShellArg "${socktainerStateDirectory}/socktainer.out.log"}
+
+          case "$target" in
+            out|stdout)
+              print_socktainer_logs "$out_log" "socktainer stdout"
+              ;;
+            err|stderr)
+              print_socktainer_logs "$err_log" "socktainer stderr"
+              ;;
+            both)
+              print_socktainer_logs "$err_log" "socktainer stderr"
+              printf '\n'
+              print_socktainer_logs "$out_log" "socktainer stdout"
+              ;;
+            *) echo "unknown socktainer log target: $target" >&2; exit 2 ;;
+          esac
+        }
+
+        do_socktainer() {
+          local subcommand="''${1:-status}"
+
+          shift || true
+
+          case "$subcommand" in
+            status)
+              do_socktainer_status
+              ;;
+            log|logs)
+              if [ "$#" -eq 0 ]; then
+                do_socktainer_logs both
+                exit 0
+              fi
+
+              case "$1" in
+                --err|--stderr)
+                  do_socktainer_logs err
+                  ;;
+                --out|--stdout)
+                  do_socktainer_logs out
+                  ;;
+                err|stderr|out|stdout|both)
+                  do_socktainer_logs "$1"
+                  ;;
+                *)
+                  echo "unknown socktainer log option: $1" >&2
+                  exit 2
+                  ;;
+              esac
+              ;;
+            *)
+              echo "unknown socktainer command: $subcommand" >&2
+              exit 2
+              ;;
+          esac
         }
 
         do_host_check() {
@@ -759,8 +813,7 @@ let
       ssh               Open an SSH session to the builder.
       inspect           Show raw launchd and container inspection data.
       host-check        Verify host.container.internal reaches a host TCP port.
-      socktainer-status Show Socktainer agent, socket, and API status.
-      socktainer-logs   Show Socktainer logs. Targets: err, out.
+      socktainer        Manage Socktainer. Subcommands: status, log, logs.
     EOF
           exit 0
         fi
@@ -778,8 +831,7 @@ let
           ssh) do_ssh "$@" ;;
           inspect) do_inspect ;;
           host-check) do_host_check "$@" ;;
-          socktainer-status) do_socktainer_status ;;
-          socktainer-logs) do_socktainer_logs "$@" ;;
+          socktainer) do_socktainer "$@" ;;
           *) echo "unknown command: $command" >&2; exit 2 ;;
         esac
   '';
