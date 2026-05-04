@@ -33,6 +33,7 @@
         2,
         "always",
         [
+          "cli",
           "module",
           "runtime",
           "docs",

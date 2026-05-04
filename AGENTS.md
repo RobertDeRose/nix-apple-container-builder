@@ -17,6 +17,7 @@ Start here when working in this repository.
 ### Supported Scopes
 
 - Prefer one of these scopes when a commit is primarily about a single area:
+  - `cli`
   - `module`
   - `runtime`
   - `docs`
