@@ -4,6 +4,7 @@ experimental = true
 env_shell_expand = true
 
 [tools]
+argc = "latest"
 actionlint = "latest"
 hadolint = "latest"
 hk = { version = "1.41", arch = "aarch64" }

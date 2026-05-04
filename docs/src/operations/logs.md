@@ -13,11 +13,13 @@ Common log files:
 Use the helper to read the most important logs:
 
 ```bash
-hb logs readiness
-hb logs bridge
-hb logs bridge-out
-hb logs boot
-hb logs idle
+hb builder logs readiness
+hb builder logs bridge
+hb builder logs bridge-out
+hb builder logs boot
+hb builder logs idle
+hb socktainer logs
+hb socktainer logs -f
 ```
 
 These logs are usually the fastest way to determine whether a failure is in:

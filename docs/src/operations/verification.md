@@ -3,27 +3,27 @@
 Main helper entrypoint:
 
 ```bash
-hb status
+hb builder
 ```
 
 Recovery-aware verification path:
 
 ```bash
-hb repair
+hb builder repair
 ```
 
 Useful checks after activation:
 
 ```bash
-hb status
-hb repair
+hb builder
+hb builder repair
 ssh nix-builder true
 nix store ping --store ssh-ng://container-builder
 nix build --max-jobs 0 --rebuild nixpkgs#legacyPackages.aarch64-linux.hello
 ```
 
-`hb repair` attempts to recover the Apple container system before retrying the
-builder startup path. It also verifies:
+`hb builder repair` attempts to recover the Apple container system before
+retrying the builder startup path. It also verifies:
 
 - container system health
 - bridge agent presence
@@ -34,12 +34,15 @@ builder startup path. It also verifies:
 
 Other useful helper commands:
 
-- `hb reset`
-- `hb restart`
-- `hb ssh`
-- `hb inspect`
-- `hb gc`
-- `hb host-check 22`
+- `hb builder reset`
+- `hb builder ssh`
+- `hb builder inspect`
+- `hb builder gc`
+- `hb doctor`
+- `hb doctor runtime`
+- `hb doctor dns`
+- `hb doctor host`
+- `hb doctor host 22`
 
 If guest-side DNS looks wrong, first verify the defaults before setting custom
 `dns.servers`. The default Apple resolver should allow both normal external
@@ -51,7 +54,6 @@ If Socktainer is enabled, useful checks include:
 hb socktainer
 hb socktainer status
 hb socktainer logs
-hb socktainer log --err
-hb socktainer logs --out
+hb socktainer logs -f
 DOCKER_HOST=unix://$HOME/.socktainer/container.sock docker ps
 ```

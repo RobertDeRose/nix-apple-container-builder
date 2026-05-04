@@ -1,0 +1,502 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash disable=SC2016,SC2034,SC2154
+set -euo pipefail
+
+# @describe Helper CLI for nix-hex-box container-builder operations
+# @meta binname hb
+
+hb_env_loaded=0
+
+hb_init() {
+  if [ "$hb_env_loaded" -eq 1 ]; then
+    return
+  fi
+
+  host_alias=${HB_HOST_ALIAS:?}
+  ssh_config=${HB_SSH_CONFIG:?}
+  container_bin=${HB_CONTAINER_BIN:?}
+  container_name=${HB_CONTAINER_NAME:?}
+  reconcile_host_container_internal=${HB_RECONCILE_HOST_CONTAINER_INTERNAL:?}
+  socktainer_enabled=${HB_SOCKTAINER_ENABLED:?}
+  socktainer_agent_label=${HB_SOCKTAINER_AGENT_LABEL:?}
+  socktainer_socket=${HB_SOCKTAINER_SOCKET:?}
+  socktainer_health=${HB_SOCKTAINER_HEALTH:?}
+  socktainer_err_log=${HB_SOCKTAINER_ERR_LOG:?}
+  socktainer_out_log=${HB_SOCKTAINER_OUT_LOG:?}
+  readiness_log=${HB_READINESS_LOG:?}
+  bridge_agent_label=${HB_BRIDGE_AGENT_LABEL:?}
+  bridge_out_log=${HB_BRIDGE_OUT_LOG:?}
+  bridge_err_log=${HB_BRIDGE_ERR_LOG:?}
+  remote_store=${HB_REMOTE_STORE:?}
+  start_script=${HB_START_SCRIPT:?}
+  stop_script=${HB_STOP_SCRIPT:?}
+  readiness_script=${HB_READINESS_SCRIPT:?}
+  expose_host_container_internal=${HB_EXPOSE_HOST_CONTAINER_INTERNAL:?}
+  idle_log=${HB_IDLE_LOG:?}
+  hb_env_loaded=1
+}
+
+if [ "$#" -eq 1 ]; then
+  case "$1" in
+    builder) set -- builder status ;;
+    socktainer) set -- socktainer status ;;
+  esac
+fi
+
+if [ "${1:-}" = builder ] && [ "${2:-}" = ssh ] && [ "$#" -eq 3 ]; then
+  case "${3:-}" in
+    -h | --help | -help)
+      cat << 'EOF'
+Open an SSH session to the builder
+
+USAGE: hb builder ssh [ARGS]...
+
+ARGS:
+  [ARGS]...
+EOF
+      exit 0
+      ;;
+  esac
+fi
+
+print_mark() {
+  case "$1" in
+    ok) printf '[x] %s\n' "$2" ;;
+    fail) printf '[ ] %s\n' "$2" ;;
+    skip) printf '[-] %s\n' "$2" ;;
+  esac
+}
+
+recover_container_system() {
+  "$container_bin" system start --enable-kernel-install
+}
+
+doctor_runtime_impl() {
+  if status_system > /dev/null; then
+    print_mark ok 'Apple container runtime is healthy'
+    return 0
+  fi
+
+  print_mark fail 'Apple container runtime is unhealthy; attempting recovery'
+  if recover_container_system; then
+    print_mark ok 'Apple container runtime recovery succeeded'
+    return 0
+  fi
+
+  print_mark fail 'Apple container runtime recovery failed'
+  return 1
+}
+
+status_system() {
+  "$container_bin" system status --format json 2> /dev/null || return 1
+}
+
+status_container() {
+  "$container_bin" inspect "$container_name" 2> /dev/null || return 1
+}
+
+status_ssh() {
+  /usr/bin/ssh -F "$ssh_config" -o BatchMode=yes -o ConnectTimeout=2 "$host_alias" true > /dev/null 2>&1
+}
+
+status_remote_store() {
+  nix store ping --store "$remote_store" > /dev/null 2>&1
+}
+
+status_with_retries() {
+  local attempts="$1"
+  shift
+  local remaining="$attempts"
+
+  while [ "$remaining" -gt 0 ]; do
+    if "$@"; then
+      return 0
+    fi
+    remaining=$((remaining - 1))
+    if [ "$remaining" -gt 0 ]; then
+      /bin/sleep 1
+    fi
+  done
+
+  return 1
+}
+
+# @cmd Builder operations
+builder() {
+  builder::status
+}
+
+# @cmd Show builder status summary
+builder::status() {
+  hb_init
+  local system_state=down
+  local container_state=missing
+  local ssh_state=failed
+  local remote_state=failed
+  local bridge_state=disabled
+
+  if status_system > /dev/null; then
+    system_state=running
+  fi
+
+  if status_container | /usr/bin/grep -q '"status"[[:space:]]*:[[:space:]]*"running"'; then
+    container_state=running
+  elif status_container > /dev/null 2>&1; then
+    container_state=stopped
+  fi
+
+  if [ "$container_state" = running ]; then
+    if status_with_retries 3 status_ssh; then
+      ssh_state=ok
+    else
+      ssh_state=starting
+    fi
+  fi
+
+  if [ "$container_state" = running ]; then
+    if status_with_retries 3 status_remote_store; then
+      remote_state=ok
+    else
+      remote_state=starting
+    fi
+  fi
+
+  if launchctl print "gui/$(id -u)/$bridge_agent_label" > /dev/null 2>&1; then
+    bridge_state=loaded
+  fi
+
+  printf '%-18s %s\n' COMPONENT STATE
+  printf '%-18s %s\n' --------- -----
+  printf '%-18s %s\n' 'container system' "$system_state"
+  printf '%-18s %s\n' 'bridge agent' "$bridge_state"
+  printf '%-18s %s\n' 'builder container' "$container_state"
+  printf '%-18s %s\n' 'ssh handshake' "$ssh_state"
+  printf '%-18s %s\n' 'remote store' "$remote_state"
+}
+
+show_logs() {
+  local target="$1"
+  local follow="$2"
+  local lines="$3"
+  local logfile
+
+  case "$target" in
+    idle) logfile="$idle_log" ;;
+    readiness) logfile="$readiness_log" ;;
+    bridge) logfile="$bridge_err_log" ;;
+    bridge-out) logfile="$bridge_out_log" ;;
+    boot)
+      if [ "$follow" -eq 1 ]; then
+        exec "$container_bin" logs --boot --follow "$container_name"
+      else
+        exec "$container_bin" logs --boot -n "$lines" "$container_name"
+      fi
+      ;;
+    *)
+      echo "unknown log target: $target" >&2
+      exit 2
+      ;;
+  esac
+
+  if [ ! -f "$logfile" ]; then
+    echo "log file not found: $logfile" >&2
+    exit 1
+  fi
+
+  if [ "$follow" -eq 1 ]; then
+    exec /usr/bin/tail -n "$lines" -f "$logfile"
+  else
+    exec /usr/bin/tail -n "$lines" "$logfile"
+  fi
+}
+
+# @cmd Show builder logs
+# @arg target![idle|readiness|bridge|bridge-out|boot] Log target
+# @flag -f --follow Follow log output
+# @option -n --lines <LINES> Number of lines to show
+builder::logs() {
+  hb_init
+  show_logs "$argc_target" "${argc_follow:-0}" "${argc_lines:-100}"
+}
+
+# @cmd Verify builder health and recover runtime if needed
+builder::repair() {
+  hb_init
+  local readiness_attempt=1
+  local readiness_ok=0
+
+  if ! doctor_runtime_impl; then
+    exit 1
+  fi
+
+  if launchctl print "gui/$(id -u)/$bridge_agent_label" > /dev/null 2>&1; then
+    print_mark ok 'Bridge agent loaded'
+  else
+    print_mark fail 'Bridge agent not loaded'
+  fi
+
+  "$start_script" > /dev/null 2>&1 || true
+
+  if status_container | /usr/bin/grep -q '"status"[[:space:]]*:[[:space:]]*"running"'; then
+    print_mark ok 'Builder container running'
+  else
+    print_mark fail 'Builder container not running'
+    exit 1
+  fi
+
+  while [ "$readiness_attempt" -le 3 ]; do
+    if "$readiness_script" > /dev/null 2>&1; then
+      readiness_ok=1
+      break
+    fi
+
+    readiness_attempt=$((readiness_attempt + 1))
+    if [ "$readiness_attempt" -le 3 ]; then
+      "$start_script" > /dev/null 2>&1 || true
+      /bin/sleep 2
+    fi
+  done
+
+  if [ "$readiness_ok" -eq 1 ]; then
+    print_mark ok 'SSH handshake succeeded'
+  else
+    print_mark fail 'SSH handshake failed'
+    exit 1
+  fi
+
+  if /usr/bin/ssh -F "$ssh_config" -o BatchMode=yes "$host_alias" 'nix store ping --store https://cache.nixos.org' > /dev/null 2>&1; then
+    print_mark ok 'Builder can reach cache.nixos.org'
+  else
+    print_mark fail 'Builder cannot reach cache.nixos.org'
+    exit 1
+  fi
+
+  if nix store ping --store "$remote_store" > /dev/null 2>&1; then
+    print_mark ok 'Host can reach remote store'
+  else
+    print_mark fail 'Host cannot reach remote store'
+    exit 1
+  fi
+
+}
+
+# @cmd Destroy and recreate the builder container
+builder::reset() {
+  hb_init
+  "$stop_script" > /dev/null 2>&1 || true
+  "$start_script"
+  "$readiness_script"
+  builder::status
+}
+
+# @cmd Run nix garbage collection inside the builder
+builder::gc() {
+  hb_init
+  exec /usr/bin/ssh -F "$ssh_config" "$host_alias" 'nix-collect-garbage -d'
+}
+
+# @cmd Show raw launchd and container inspection data
+builder::inspect() {
+  hb_init
+  printf '==> launchd bridge\n'
+  launchctl print "gui/$(id -u)/$bridge_agent_label" || true
+  if launchctl print "gui/$(id -u)/$socktainer_agent_label" > /dev/null 2>&1; then
+    printf '\n==> launchd socktainer\n'
+    launchctl print "gui/$(id -u)/$socktainer_agent_label" || true
+  fi
+  printf '\n==> container inspect\n'
+  status_container || true
+}
+
+# @cmd Open an SSH session to the builder
+# @arg args~
+builder::ssh() {
+  hb_init
+  exec /usr/bin/ssh -F "$ssh_config" "$host_alias" "$@"
+}
+
+socktainer_disabled() {
+  echo 'socktainer is disabled' >&2
+  exit 1
+}
+
+# @cmd Manage Socktainer
+socktainer() {
+  hb_init
+  socktainer::status
+}
+
+# @cmd Show Socktainer status
+socktainer::status() {
+  hb_init
+  local agent_state=disabled
+  local socket_state=missing
+  local ping_state=failed
+
+  if [ "$socktainer_enabled" != true ]; then
+    socktainer_disabled
+  fi
+
+  if launchctl print "gui/$(id -u)/$socktainer_agent_label" > /dev/null 2>&1; then
+    agent_state=loaded
+  fi
+
+  if [ -S "$socktainer_socket" ]; then
+    socket_state=present
+  fi
+
+  if "$socktainer_health" > /dev/null 2>&1; then
+    ping_state=ok
+  fi
+
+  printf '%-18s %s\n' COMPONENT STATE
+  printf '%-18s %s\n' 'socktainer agent' "$agent_state"
+  printf '%-18s %s\n' 'socktainer socket' "$socket_state"
+  printf '%-18s %s\n' 'socktainer ping' "$ping_state"
+  printf '%-18s %s\n' 'docker host' "unix://$socktainer_socket"
+}
+
+socktainer_logs_impl() {
+  local follow="$1"
+
+  if [ "$socktainer_enabled" != true ]; then
+    socktainer_disabled
+  fi
+
+  if [ ! -f "$socktainer_err_log" ]; then
+    echo "log file not found: $socktainer_err_log" >&2
+    exit 1
+  fi
+
+  if [ ! -f "$socktainer_out_log" ]; then
+    echo "log file not found: $socktainer_out_log" >&2
+    exit 1
+  fi
+
+  if [ "$follow" -eq 1 ]; then
+    exec /usr/bin/tail -n 100 -f "$socktainer_err_log" "$socktainer_out_log"
+  else
+    printf '==> socktainer stderr\n'
+    /usr/bin/tail -n 100 "$socktainer_err_log"
+    printf '\n'
+    printf '==> socktainer stdout\n'
+    /usr/bin/tail -n 100 "$socktainer_out_log"
+  fi
+}
+
+# @cmd Show Socktainer logs
+# @flag -f --follow Follow log output
+socktainer::logs() {
+  hb_init
+  socktainer_logs_impl "${argc_follow:-0}"
+}
+
+# @cmd Run runtime and connectivity diagnostics
+doctor() {
+  hb_init
+  doctor::runtime
+  doctor::dns
+  doctor::host
+}
+
+probe_container_dns_name() {
+  local host="$1"
+
+  "$container_bin" run --rm docker.io/alpine:latest sh -eu -c "getent hosts $host >/dev/null" > /dev/null 2>&1
+}
+
+probe_container_tcp_target() {
+  local host="$1"
+  local port="$2"
+
+  "$container_bin" run --rm docker.io/alpine:latest sh -eu -c "nc -zvw5 $host $port" > /dev/null 2>&1
+}
+
+# @cmd Check and recover Apple container runtime
+doctor::runtime() {
+  hb_init
+  doctor_runtime_impl
+}
+
+# @cmd Check container access to common external domains
+doctor::dns() {
+  hb_init
+  local failed=0
+  local domains
+
+  domains=(google.com github.com cache.nixos.org)
+
+  if ! status_system > /dev/null; then
+    recover_container_system > /dev/null
+  fi
+
+  for domain in "${domains[@]}"; do
+    if probe_container_tcp_target "$domain" 443; then
+      print_mark ok "Container can reach $domain:443"
+    else
+      print_mark fail "Container cannot reach $domain:443"
+      failed=1
+    fi
+  done
+
+  if [ "$failed" -ne 0 ]; then
+    exit 1
+  fi
+}
+
+# @cmd Check container access to host.container.internal
+# @arg port TCP port to probe on host.container.internal
+doctor::host() {
+  hb_init
+  local port="${argc_port:-}"
+
+  if ! status_system > /dev/null; then
+    recover_container_system > /dev/null
+  fi
+
+  if probe_container_dns_name host.container.internal; then
+    print_mark ok 'Container resolves host.container.internal'
+  else
+    print_mark fail 'Container cannot resolve host.container.internal'
+    exit 1
+  fi
+
+  if [ -z "$port" ]; then
+    exit 0
+  fi
+
+  case "$port" in
+    *[!0-9]* | '')
+      echo "port must be numeric: $port" >&2
+      exit 2
+      ;;
+  esac
+
+  if [ "$expose_host_container_internal" != true ]; then
+    echo 'host.container.internal exposure is disabled in services.container-builder.exposeHostContainerInternal' >&2
+    exit 1
+  fi
+
+  if probe_container_tcp_target host.container.internal "$port"; then
+    print_mark ok "Container can reach host.container.internal:$port"
+    exit 0
+  fi
+
+  if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+    "$reconcile_host_container_internal"
+  else
+    /usr/bin/sudo "$reconcile_host_container_internal"
+  fi
+
+  if probe_container_tcp_target host.container.internal "$port"; then
+    print_mark ok "Container can reach host.container.internal:$port"
+  else
+    print_mark fail "Container cannot reach host.container.internal:$port"
+    exit 1
+  fi
+}
+
+if [ "$#" -eq 1 ] && [ "$1" = doctor ]; then
+  doctor
+  exit $?
+fi

@@ -20,3 +20,6 @@ Important files include:
 
 These files are the practical runtime interface to the builder. They are
 generated from the active Nix configuration and should not be edited manually.
+
+The repository copy of `assets/hb.sh` is also generated. Edit `scripts/hb.sh`
+and regenerate `assets/hb.sh` instead of changing the built helper directly.

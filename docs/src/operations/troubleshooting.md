@@ -5,9 +5,9 @@
 Start with:
 
 ```bash
-hb repair
-hb logs readiness
-hb logs boot
+hb builder repair
+hb builder logs readiness
+hb builder logs boot
 ```
 
 Look for guest init failures, SSH startup problems, or bridge/proxy timeouts.
@@ -18,8 +18,9 @@ The Apple `container` runtime is still an external mutable subsystem. The
 module can reconcile configuration and containers, but it cannot guarantee the
 runtime substrate is always healthy.
 
-`hb repair` attempts a recovery by starting the container system with kernel
-install enabled before retrying the builder.
+`hb doctor runtime` checks the Apple container runtime and attempts recovery for
+known failure boundaries. `hb builder repair` uses the same runtime recovery
+path before retrying the builder.
 
 ## Cache resolution fails inside the guest
 

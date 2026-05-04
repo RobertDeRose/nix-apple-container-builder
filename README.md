@@ -153,8 +153,7 @@ The helper also exposes:
 - `hb socktainer` defaults to `hb socktainer status`
 - `hb socktainer status`
 - `hb socktainer logs`
-- `hb socktainer log --err`
-- `hb socktainer logs --out`
+- `hb socktainer logs -f`
 
 To export `DOCKER_HOST` automatically for user sessions, set:
 
@@ -198,43 +197,52 @@ boot so the watchdog can use `ps` without blocking container startup.
 After activation, the main helper entrypoint is:
 
 ```bash
-hb status
+hb builder
 ```
 
 For full verification and recovery-aware checks, use:
 
 ```bash
-hb repair
+hb builder repair
 ```
 
 The helper supports:
 
-- `hb status`
-- `hb repair`
-- `hb logs [readiness|bridge|bridge-out|boot|idle]`
-- `hb gc`
-- `hb reset`
-- `hb restart`
-- `hb ssh`
-- `hb inspect`
-- `hb host-check <port>`
+- `hb builder`
+- `hb builder repair`
+- `hb builder logs [readiness|bridge|bridge-out|boot|idle]`
+- `hb builder reset`
+- `hb builder gc`
+- `hb builder ssh`
+- `hb builder inspect`
+- `hb doctor`
+- `hb doctor runtime`
+- `hb doctor dns`
+- `hb doctor host [port]`
 
 The helper's user-side SSH path uses `ProxyCommand ${HOME}/.local/state/hb/proxy.sh`
 to wake the builder and relay directly to the current container IP. The root
 daemon path can still use the localhost bridge, which remains the supported path
 for remote builds on the current host setup.
 
-To verify that Apple’s `host.container.internal` forwarding can reach a host
-service, run:
+To run runtime and connectivity diagnostics, use:
 
 ```bash
-hb host-check 8000
+hb doctor
+hb doctor runtime
+hb doctor dns
+hb doctor host
+hb doctor host 8000
 ```
 
-This starts a short-lived test container and checks TCP connectivity to
-`host.container.internal:<port>`. It tries the probe first without elevation,
-then re-applies Apple's localhost forwarding with `sudo` only if the first
-probe fails.
+`hb doctor runtime` checks the Apple container runtime and attempts recovery for
+known failure boundaries. `hb doctor dns` checks connectivity to well-known
+domains such as `google.com`, `github.com`, and `cache.nixos.org` over `443`.
+`hb doctor host` verifies that a throwaway container resolves
+`host.container.internal`, and if you pass a port it also checks
+`host.container.internal:<port>`. For the host port probe, it tries the check
+first without elevation, then re-applies Apple's localhost forwarding with
+`sudo` only if the first probe fails.
 
 When idle shutdown is enabled, the watchdog runs inside the container and logs
 its decisions to `~/.local/state/hb/hexbox-idle.log`. It resets its timer
@@ -249,8 +257,9 @@ The helper checks:
 - Nix cache reachability inside the builder
 - `ssh-ng://container-builder` reachability from the host daemon side
 
-If the Apple container system is hung, the on-demand start path and `hb repair`
-attempt recovery by running `container system start --enable-kernel-install`
-before retrying the builder container.
+If the Apple container system is hung, the on-demand start path and
+`hb doctor runtime` attempt recovery by running
+`container system start --enable-kernel-install`. `hb builder repair` reuses
+that same recovery path before retrying the builder container.
 
 See `docs/spec.md` for the detailed design notes.

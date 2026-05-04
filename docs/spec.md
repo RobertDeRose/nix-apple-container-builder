@@ -39,8 +39,9 @@
   - `init-debug.log`
   - `hexbox-bridge`
 - Typical health checks:
-  - `hb status`
-  - `hb repair`
+  - `hb builder`
+  - `hb builder repair`
+  - `hb doctor runtime`
   - `ssh nix-builder true`
   - `nix store ping --store ssh-ng://container-builder`
 
