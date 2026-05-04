@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash disable=SC2016,SC2034,SC2154
-set -euo pipefail
+set -eo pipefail
 
 # @describe Helper CLI for nix-hex-box container-builder operations
 # @meta binname hb
@@ -60,11 +60,29 @@ EOF
 fi
 
 print_mark() {
+  printf '%s %s\n' "$(status_icon "$1")" "$2"
+}
+
+print_error() {
+  print_mark fail "$1" >&2
+}
+
+status_icon() {
   case "$1" in
-    ok) printf '[x] %s\n' "$2" ;;
-    fail) printf '[ ] %s\n' "$2" ;;
-    skip) printf '[-] %s\n' "$2" ;;
+    ok) printf '✅' ;;
+    fail) printf '❌' ;;
+    skip) printf '⚠️' ;;
+    info) printf 'ℹ️' ;;
+    pending) printf '⏳' ;;
   esac
+}
+
+print_heading() {
+  printf '%s %s\n' "$1" "$2"
+}
+
+print_state_row() {
+  printf '%-18s %s %s\n' "$1" "$(status_icon "$2")" "$3"
 }
 
 recover_container_system() {
@@ -129,49 +147,60 @@ builder() {
 # @cmd Show builder status summary
 builder::status() {
   hb_init
-  local system_state=down
-  local container_state=missing
-  local ssh_state=failed
-  local remote_state=failed
-  local bridge_state=disabled
+  local system_kind=fail
+  local system_text='not running'
+  local container_kind=fail
+  local container_text=missing
+  local ssh_kind=fail
+  local ssh_text=unreachable
+  local remote_kind=fail
+  local remote_text=unreachable
+  local bridge_kind=fail
+  local bridge_text='not loaded'
 
   if status_system > /dev/null; then
-    system_state=running
+    system_kind=ok
+    system_text=running
   fi
 
   if status_container | /usr/bin/grep -q '"status"[[:space:]]*:[[:space:]]*"running"'; then
-    container_state=running
+    container_kind=ok
+    container_text=running
   elif status_container > /dev/null 2>&1; then
-    container_state=stopped
+    container_text=stopped
   fi
 
-  if [ "$container_state" = running ]; then
+  if [ "$container_text" = running ]; then
     if status_with_retries 3 status_ssh; then
-      ssh_state=ok
+      ssh_kind=ok
+      ssh_text=ready
     else
-      ssh_state=starting
+      ssh_kind=pending
+      ssh_text=starting
     fi
   fi
 
-  if [ "$container_state" = running ]; then
+  if [ "$container_text" = running ]; then
     if status_with_retries 3 status_remote_store; then
-      remote_state=ok
+      remote_kind=ok
+      remote_text=reachable
     else
-      remote_state=starting
+      remote_kind=pending
+      remote_text=starting
     fi
   fi
 
   if launchctl print "gui/$(id -u)/$bridge_agent_label" > /dev/null 2>&1; then
-    bridge_state=loaded
+    bridge_kind=ok
+    bridge_text=loaded
   fi
 
-  printf '%-18s %s\n' COMPONENT STATE
-  printf '%-18s %s\n' --------- -----
-  printf '%-18s %s\n' 'container system' "$system_state"
-  printf '%-18s %s\n' 'bridge agent' "$bridge_state"
-  printf '%-18s %s\n' 'builder container' "$container_state"
-  printf '%-18s %s\n' 'ssh handshake' "$ssh_state"
-  printf '%-18s %s\n' 'remote store' "$remote_state"
+  print_heading '🔨' 'Builder status'
+  print_state_row 'container system' "$system_kind" "$system_text"
+  print_state_row 'bridge agent' "$bridge_kind" "$bridge_text"
+  print_state_row 'builder container' "$container_kind" "$container_text"
+  print_state_row 'ssh handshake' "$ssh_kind" "$ssh_text"
+  print_state_row 'remote store' "$remote_kind" "$remote_text"
 }
 
 show_logs() {
@@ -193,19 +222,20 @@ show_logs() {
       fi
       ;;
     *)
-      echo "unknown log target: $target" >&2
+      print_error "Unknown log target: $target"
       exit 2
       ;;
   esac
 
   if [ ! -f "$logfile" ]; then
-    echo "log file not found: $logfile" >&2
+    print_error "Log file not found: $logfile"
     exit 1
   fi
 
   if [ "$follow" -eq 1 ]; then
     exec /usr/bin/tail -n "$lines" -f "$logfile"
   else
+    print_heading '📜' "Builder logs: $target"
     exec /usr/bin/tail -n "$lines" "$logfile"
   fi
 }
@@ -298,13 +328,15 @@ builder::gc() {
 # @cmd Show raw launchd and container inspection data
 builder::inspect() {
   hb_init
-  printf '==> launchd bridge\n'
+  print_heading '🔎' 'launchd bridge'
   launchctl print "gui/$(id -u)/$bridge_agent_label" || true
   if launchctl print "gui/$(id -u)/$socktainer_agent_label" > /dev/null 2>&1; then
-    printf '\n==> launchd socktainer\n'
+    printf '\n'
+    print_heading '🔎' 'launchd socktainer'
     launchctl print "gui/$(id -u)/$socktainer_agent_label" || true
   fi
-  printf '\n==> container inspect\n'
+  printf '\n'
+  print_heading '🔎' 'container inspect'
   status_container || true
 }
 
@@ -316,7 +348,7 @@ builder::ssh() {
 }
 
 socktainer_disabled() {
-  echo 'socktainer is disabled' >&2
+  print_error 'Socktainer is disabled'
   exit 1
 }
 
@@ -329,31 +361,37 @@ socktainer() {
 # @cmd Show Socktainer status
 socktainer::status() {
   hb_init
-  local agent_state=disabled
-  local socket_state=missing
-  local ping_state=failed
+  local agent_kind=fail
+  local agent_text='not loaded'
+  local socket_kind=fail
+  local socket_text=missing
+  local ping_kind=fail
+  local ping_text=unreachable
 
   if [ "$socktainer_enabled" != true ]; then
     socktainer_disabled
   fi
 
   if launchctl print "gui/$(id -u)/$socktainer_agent_label" > /dev/null 2>&1; then
-    agent_state=loaded
+    agent_kind=ok
+    agent_text=loaded
   fi
 
   if [ -S "$socktainer_socket" ]; then
-    socket_state=present
+    socket_kind=ok
+    socket_text=present
   fi
 
   if "$socktainer_health" > /dev/null 2>&1; then
-    ping_state=ok
+    ping_kind=ok
+    ping_text=ready
   fi
 
-  printf '%-18s %s\n' COMPONENT STATE
-  printf '%-18s %s\n' 'socktainer agent' "$agent_state"
-  printf '%-18s %s\n' 'socktainer socket' "$socket_state"
-  printf '%-18s %s\n' 'socktainer ping' "$ping_state"
-  printf '%-18s %s\n' 'docker host' "unix://$socktainer_socket"
+  print_heading '🚢' 'Socktainer status'
+  print_state_row 'socktainer agent' "$agent_kind" "$agent_text"
+  print_state_row 'socktainer socket' "$socket_kind" "$socket_text"
+  print_state_row 'socktainer ping' "$ping_kind" "$ping_text"
+  print_state_row 'docker host' info "unix://$socktainer_socket"
 }
 
 socktainer_logs_impl() {
@@ -364,22 +402,22 @@ socktainer_logs_impl() {
   fi
 
   if [ ! -f "$socktainer_err_log" ]; then
-    echo "log file not found: $socktainer_err_log" >&2
+    print_error "Log file not found: $socktainer_err_log"
     exit 1
   fi
 
   if [ ! -f "$socktainer_out_log" ]; then
-    echo "log file not found: $socktainer_out_log" >&2
+    print_error "Log file not found: $socktainer_out_log"
     exit 1
   fi
 
   if [ "$follow" -eq 1 ]; then
     exec /usr/bin/tail -n 100 -f "$socktainer_err_log" "$socktainer_out_log"
   else
-    printf '==> socktainer stderr\n'
+    print_heading '📜' 'socktainer stderr'
     /usr/bin/tail -n 100 "$socktainer_err_log"
     printf '\n'
-    printf '==> socktainer stdout\n'
+    print_heading '📜' 'socktainer stdout'
     /usr/bin/tail -n 100 "$socktainer_out_log"
   fi
 }
@@ -395,7 +433,9 @@ socktainer::logs() {
 doctor() {
   hb_init
   doctor::runtime
+  printf '\n'
   doctor::dns
+  printf '\n'
   doctor::host
 }
 
@@ -415,6 +455,7 @@ probe_container_tcp_target() {
 # @cmd Check and recover Apple container runtime
 doctor::runtime() {
   hb_init
+  print_heading '🩻' 'Runtime check'
   doctor_runtime_impl
 }
 
@@ -424,6 +465,7 @@ doctor::dns() {
   local failed=0
   local domains
 
+  print_heading '🌐' 'DNS check'
   domains=(google.com github.com cache.nixos.org)
 
   if ! status_system > /dev/null; then
@@ -450,6 +492,8 @@ doctor::host() {
   hb_init
   local port="${argc_port:-}"
 
+  print_heading '🏠' 'Host reachability check'
+
   if ! status_system > /dev/null; then
     recover_container_system > /dev/null
   fi
@@ -467,13 +511,13 @@ doctor::host() {
 
   case "$port" in
     *[!0-9]* | '')
-      echo "port must be numeric: $port" >&2
+      print_error "Port must be numeric: $port"
       exit 2
       ;;
   esac
 
   if [ "$expose_host_container_internal" != true ]; then
-    echo 'host.container.internal exposure is disabled in services.container-builder.exposeHostContainerInternal' >&2
+    print_error 'host.container.internal exposure is disabled in services.container-builder.exposeHostContainerInternal'
     exit 1
   fi
 
