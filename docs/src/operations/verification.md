@@ -39,6 +39,11 @@ Other useful helper commands:
 - `hb ssh`
 - `hb inspect`
 - `hb gc`
+- `hb host-check 22`
+
+If guest-side DNS looks wrong, first verify the defaults before setting custom
+`dns.servers`. The default Apple resolver should allow both normal external
+lookups and `host.container.internal` from inside the container.
 
 If Socktainer is enabled, useful checks include:
 

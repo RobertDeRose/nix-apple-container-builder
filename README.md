@@ -113,9 +113,12 @@ Example:
 ```nix
 services.container-builder = {
   enable = true;
-  dns.servers = [ "1.1.1.1" "8.8.8.8" ];
 };
 ```
+
+Leave `services.container-builder.dns.servers` empty to keep Apple's default
+container resolver. Set it only if you have verified that your chosen DNS
+servers work correctly with Apple containers in your environment.
 
 By default the module also ensures Apple's documented host alias is available:
 

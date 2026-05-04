@@ -47,3 +47,10 @@ Current default behavior to keep in mind:
 - `hostAlias = "container-builder"`
 - `listenAddress = "127.0.0.1"`
 - `port = 2222`
+- `dns.servers = [ ]` to preserve Apple's default container resolver
+- `exposeHostContainerInternal = true`
+
+Avoid setting `dns.servers` unless you have verified the chosen resolvers work
+correctly with Apple containers in your environment. In local testing,
+overriding DNS with public resolvers broke both `host.container.internal` and
+normal external lookups from inside the builder container.

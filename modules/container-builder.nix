@@ -39,10 +39,11 @@ let
 
     if ${boolToString cfg.exposeHostContainerInternal}; then
       if ${escapeShellArg cfg.containerBinary} system dns list 2>/dev/null | /usr/bin/grep -qx ${escapeShellArg hostContainerInternalDomain}; then
-        ${escapeShellArg cfg.containerBinary} system dns delete ${escapeShellArg hostContainerInternalDomain}
+        echo "Apple container DNS entry already present for ${hostContainerInternalDomain}" >&2
+      else
+        echo "creating Apple container DNS entry for ${hostContainerInternalDomain}" >&2
+        ${escapeShellArg cfg.containerBinary} system dns create ${escapeShellArg hostContainerInternalDomain} --localhost ${escapeShellArg hostContainerInternalLoopback}
       fi
-      echo "configuring Apple container DNS entry for ${hostContainerInternalDomain}" >&2
-      ${escapeShellArg cfg.containerBinary} system dns create ${escapeShellArg hostContainerInternalDomain} --localhost ${escapeShellArg hostContainerInternalLoopback}
     elif ${escapeShellArg cfg.containerBinary} system dns list 2>/dev/null | /usr/bin/grep -qx ${escapeShellArg hostContainerInternalDomain}; then
       echo "removing Apple container DNS entry for ${hostContainerInternalDomain}" >&2
       ${escapeShellArg cfg.containerBinary} system dns delete ${escapeShellArg hostContainerInternalDomain}
@@ -958,11 +959,8 @@ in
 
     dns.servers = mkOption {
       type = types.listOf types.str;
-      default = [
-        "1.1.1.1"
-        "8.8.8.8"
-      ];
-      description = "DNS servers passed to `container run --dns` for the builder container.";
+      default = [ ];
+      description = "DNS servers passed to `container run --dns` for the builder container. Leave empty to use Apple's default container resolver.";
     };
 
     dns.search = mkOption {
@@ -992,7 +990,7 @@ in
     exposeHostContainerInternal = mkOption {
       type = types.bool;
       default = true;
-      description = "Expose `host.container.internal` to Apple containers by managing `container system dns` during activation.";
+      description = "Expose `host.container.internal` to Apple containers by ensuring the `container system dns` entry exists during activation.";
     };
 
     systems = mkOption {

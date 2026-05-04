@@ -47,5 +47,14 @@ Important options:
 - `socktainer.installer.hash`
 - `socktainer.installer.version`
 
+DNS notes:
+
+- `dns.servers` defaults to `[]`, which keeps Apple's default container
+  resolver.
+- `exposeHostContainerInternal` defaults to `true` and ensures
+  `host.container.internal` exists through `container system dns`.
+- Prefer leaving `dns.servers` empty unless you have verified custom resolvers
+  work correctly with Apple containers in your environment.
+
 See `modules/container-builder.nix` for the authoritative option defaults and
 types.
