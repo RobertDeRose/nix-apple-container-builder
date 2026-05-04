@@ -48,6 +48,7 @@ lookups and `host.container.internal` from inside the container.
 If Socktainer is enabled, useful checks include:
 
 ```bash
+hb socktainer
 hb socktainer status
 hb socktainer logs
 hb socktainer log --err
