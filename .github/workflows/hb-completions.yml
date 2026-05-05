@@ -1,0 +1,186 @@
+name: hb Completions
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/hb-completions.yml
+      - scripts/hb.sh
+      - assets/hb.sh
+      - assets/completions/hb.bash
+      - assets/completions/hb.zsh
+      - assets/completions/hb.fish
+  push:
+    paths:
+      - .github/workflows/hb-completions.yml
+      - scripts/hb.sh
+      - assets/hb.sh
+      - assets/completions/hb.bash
+      - assets/completions/hb.zsh
+      - assets/completions/hb.fish
+
+permissions:
+  contents: read
+
+jobs:
+  completion-smoke-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Shells
+        run: sudo apt-get update && sudo apt-get install -y fish zsh
+
+      - name: Bash completion smoke test
+        shell: bash
+        run: |
+          source "assets/completions/hb.bash"
+
+          COMP_WORDS=(hb "")
+          COMP_CWORD=1
+          _hb
+          printf '%s\n' "${COMPREPLY[@]}" | tee /tmp/hb-bash-top.txt
+          grep -Fx builder /tmp/hb-bash-top.txt
+          grep -Fx socktainer /tmp/hb-bash-top.txt
+          grep -Fx doctor /tmp/hb-bash-top.txt
+
+          COMP_WORDS=(hb builder "")
+          COMP_CWORD=2
+          _hb
+          printf '%s\n' "${COMPREPLY[@]}" | tee /tmp/hb-bash-builder.txt
+          grep -Fx status /tmp/hb-bash-builder.txt
+          grep -Fx logs /tmp/hb-bash-builder.txt
+          grep -Fx test /tmp/hb-bash-builder.txt
+          grep -Fx repair /tmp/hb-bash-builder.txt
+
+      - name: Zsh completion smoke test
+        shell: bash
+        run: |
+          completion_dir=$(mktemp -d)
+          chmod 700 "$completion_dir"
+          cp "assets/completions/hb.zsh" "$completion_dir/_hb"
+
+          COMPLETION_DIR="$completion_dir" zsh -fc '
+            autoload -U compinit
+            compinit -i
+            fpath=("$COMPLETION_DIR" $fpath)
+            autoload -U _hb
+            _describe() {
+              local spec="$2"
+              local -a values
+
+              if (( $# >= 2 )) && typeset -p -- "$spec" >/dev/null 2>&1; then
+                eval "values=(\"\${${spec}[@]}\")"
+                printf "%s\n" "${values[@]}"
+                return
+              fi
+
+              shift
+              printf "%s\n" "$@"
+            }
+
+            words=(hb "")
+            CURRENT=2
+            _hb | tee /tmp/hb-zsh-top.txt
+          '
+
+          grep -Fx builder /tmp/hb-zsh-top.txt
+          grep -Fx socktainer /tmp/hb-zsh-top.txt
+          grep -Fx doctor /tmp/hb-zsh-top.txt
+
+          COMPLETION_DIR="$completion_dir" zsh -fc '
+            autoload -U compinit
+            compinit -i
+            fpath=("$COMPLETION_DIR" $fpath)
+            autoload -U _hb
+            _describe() {
+              local spec="$2"
+              local -a values
+
+              if (( $# >= 2 )) && typeset -p -- "$spec" >/dev/null 2>&1; then
+                eval "values=(\"\${${spec}[@]}\")"
+                printf "%s\n" "${values[@]}"
+                return
+              fi
+
+              shift
+              printf "%s\n" "$@"
+            }
+
+            words=(hb sock)
+            CURRENT=2
+            _hb | tee /tmp/hb-zsh-top-sock.txt
+          '
+
+          grep -Fx socktainer /tmp/hb-zsh-top-sock.txt
+
+          COMPLETION_DIR="$completion_dir" zsh -fc '
+            autoload -U compinit
+            compinit -i
+            fpath=("$COMPLETION_DIR" $fpath)
+            autoload -U _hb
+            _describe() {
+              local spec="$2"
+              local -a values
+
+              if (( $# >= 2 )) && typeset -p -- "$spec" >/dev/null 2>&1; then
+                eval "values=(\"\${${spec}[@]}\")"
+                printf "%s\n" "${values[@]}"
+                return
+              fi
+
+              shift
+              printf "%s\n" "$@"
+            }
+
+            words=(hb docto)
+            CURRENT=2
+            _hb | tee /tmp/hb-zsh-top-docto.txt
+          '
+
+          grep -Fx doctor /tmp/hb-zsh-top-docto.txt
+
+          COMPLETION_DIR="$completion_dir" zsh -fc '
+            autoload -U compinit
+            compinit -i
+            fpath=("$COMPLETION_DIR" $fpath)
+            autoload -U _hb
+            _describe() {
+              local spec="$2"
+              local -a values
+
+              if (( $# >= 2 )) && typeset -p -- "$spec" >/dev/null 2>&1; then
+                eval "values=(\"\${${spec}[@]}\")"
+                printf "%s\n" "${values[@]}"
+                return
+              fi
+
+              shift
+              printf "%s\n" "$@"
+            }
+
+            words=(hb builder "")
+            CURRENT=3
+            _hb | tee /tmp/hb-zsh-builder.txt
+          '
+
+          grep -Fx status /tmp/hb-zsh-builder.txt
+          grep -Fx logs /tmp/hb-zsh-builder.txt
+          grep -Fx test /tmp/hb-zsh-builder.txt
+          grep -Fx repair /tmp/hb-zsh-builder.txt
+
+      - name: Fish completion smoke test
+        shell: bash
+        run: |
+          fish -c 'source "assets/completions/hb.fish"; complete -C "hb "' | tee /tmp/hb-fish-top.txt
+          grep -Fx builder /tmp/hb-fish-top.txt
+          grep -Fx socktainer /tmp/hb-fish-top.txt
+          grep -Fx doctor /tmp/hb-fish-top.txt
+
+          fish -c 'source "assets/completions/hb.fish"; complete -C "hb builder "' | tee /tmp/hb-fish-builder.txt
+          grep -Fx status /tmp/hb-fish-builder.txt
+          grep -Fx logs /tmp/hb-fish-builder.txt
+          grep -Fx test /tmp/hb-fish-builder.txt
+          grep -Fx repair /tmp/hb-fish-builder.txt

@@ -252,28 +252,36 @@ builder::logs() {
 # @cmd Run a simple remote build smoke test through the builder
 builder::test() {
   hb_init
-  local nonce
+  local expr
+  local output_path
+  local -a build_args
 
-  nonce=$(/bin/date +%s)
+  expr='
+    let
+      pkgs = (builtins.getFlake "nixpkgs").legacyPackages.aarch64-linux;
+    in
+    pkgs.hello
+  '
 
   builder::repair
-  print_heading '🧪' "Remote build smoke test (forced hello rebuild, nonce=$nonce)"
+  print_heading '🧪' 'Remote build smoke test (nixpkgs#legacyPackages.aarch64-linux.hello)'
 
-  exec env HB_HELLO_SMOKE_NONCE="$nonce" nix build \
-    --max-jobs 0 \
-    --no-link \
-    --rebuild \
-    --option substitute false \
-    --impure \
-    --expr '
-      let
-        pkgs = (builtins.getFlake "nixpkgs").legacyPackages.aarch64-linux;
-        nonce = builtins.getEnv "HB_HELLO_SMOKE_NONCE";
-      in
-      pkgs.hello.overrideAttrs (_: {
-        name = "hello-hb-smoke-${nonce}";
-      })
-    '
+  output_path=$(nix eval --raw --impure --expr "(${expr}).outPath")
+
+  build_args=(
+    build
+    --max-jobs 0
+    --no-link
+    --option substitute false
+    --impure
+    --expr "$expr"
+  )
+
+  if nix path-info "$output_path" > /dev/null 2>&1; then
+    build_args+=(--rebuild)
+  fi
+
+  exec nix "${build_args[@]}"
 }
 
 # @cmd Verify builder health and recover runtime if needed

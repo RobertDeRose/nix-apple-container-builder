@@ -1,14 +1,23 @@
 #compdef hb
 # Generated from scripts/hb.sh by scripts/generate-hb-assets.sh.
 
-local -a builder_commands socktainer_commands doctor_commands
+local -a top_commands builder_commands builder_help_commands builder_log_targets builder_log_options
+local -a socktainer_commands socktainer_help_commands socktainer_log_options
+local -a doctor_commands doctor_help_commands
 
+top_commands=('builder' 'socktainer' 'doctor' 'help' '--help' '-h' '--version' '-V')
 builder_commands=('status' 'logs' 'test' 'repair' 'reset' 'gc' 'inspect' 'ssh' 'help')
+builder_help_commands=('status' 'logs' 'test' 'repair' 'reset' 'gc' 'inspect' 'ssh')
+builder_log_targets=('idle' 'readiness' 'bridge' 'bridge-out' 'boot')
+builder_log_options=('-f' '--follow' '-n' '--lines' '-h' '--help')
 socktainer_commands=('status' 'logs' 'help')
+socktainer_help_commands=('status' 'logs')
+socktainer_log_options=('-f' '--follow' '-h' '--help')
 doctor_commands=('runtime' 'dns' 'host' 'help')
+doctor_help_commands=('runtime' 'dns' 'host')
 
 if ((CURRENT == 2)); then
-  _describe 'command' 'builder socktainer doctor help --help -h --version -V'
+  _describe 'command' top_commands
   return
 fi
 
@@ -22,13 +31,13 @@ case "$words[2]" in
     case "$words[3]" in
       logs)
         if ((CURRENT == 4)) && [[ "$words[CURRENT]" != -* ]]; then
-          _describe 'log target' 'idle readiness bridge bridge-out boot'
+          _describe 'log target' builder_log_targets
           return
         fi
-        _describe 'option' '-f --follow -n --lines -h --help'
+        _describe 'option' builder_log_options
         ;;
       help)
-        _describe 'builder command' 'status logs test repair reset gc inspect ssh'
+        _describe 'builder command' builder_help_commands
         ;;
       ssh)
         return
@@ -43,10 +52,10 @@ case "$words[2]" in
 
     case "$words[3]" in
       logs)
-        _describe 'option' '-f --follow -h --help'
+        _describe 'option' socktainer_log_options
         ;;
       help)
-        _describe 'socktainer command' 'status logs'
+        _describe 'socktainer command' socktainer_help_commands
         ;;
     esac
     ;;
@@ -57,10 +66,10 @@ case "$words[2]" in
     fi
 
     if [[ "$words[3]" == help ]]; then
-      _describe 'doctor command' 'runtime dns host'
+      _describe 'doctor command' doctor_help_commands
     fi
     ;;
   help)
-    _describe 'command' 'builder socktainer doctor'
+    _describe 'command' doctor_commands
     ;;
 esac
