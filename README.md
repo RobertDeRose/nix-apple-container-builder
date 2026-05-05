@@ -19,7 +19,9 @@ Current design highlights:
 - manages durable builder state under `~/.local/state/hb`
 - installs a launch agent for the optional host-side SSH bridge
 - can install and manage Socktainer as an optional Docker-compatible API layer
-- uses direct `ProxyCommand` via `~/.local/state/hb/proxy.sh` for user-side helper access, while the localhost bridge remains the compatible path for the root `nix-daemon`
+- installs host-side SSH aliases for both `nix-builder` and `container-builder`
+- uses direct `ProxyCommand` via `~/.local/state/hb/proxy.sh` for helper access, while the localhost bridge remains the compatible path for the root `nix-daemon`
+- writes a generated `known_hosts` file under `~/.local/state/hb` so both SSH paths verify the builder host key
 - configures container DNS explicitly for cache resolution
 - exposes `host.container.internal` for Apple containers by default via `container system dns`
 - waits for a real SSH handshake before considering the builder ready
@@ -67,9 +69,8 @@ Container installer version and upstream `nixos/nix` image tag.
 
 This module is functional but still in progress.
 
-Known open areas:
+Known open area:
 
-- possible direct port publishing instead of the host bridge for the root daemon path
 - broader validation of when bridge-free operation is safe for daemon-driven builds
 
 ## DNS

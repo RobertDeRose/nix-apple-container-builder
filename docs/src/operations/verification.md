@@ -22,6 +22,10 @@ nix store ping --store ssh-ng://container-builder
 nix build --max-jobs 0 --rebuild nixpkgs#legacyPackages.aarch64-linux.hello
 ```
 
+`ssh nix-builder true` uses the installed host alias and the generated
+`~/.local/state/hb/known_hosts` file, so the builder host key is verified rather
+than accepted blindly.
+
 `hb builder repair` attempts to recover the Apple container system before
 retrying the builder startup path. It also verifies:
 

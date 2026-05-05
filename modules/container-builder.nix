@@ -26,6 +26,7 @@ let
   effectiveImage = "${cfg.imageRepository}:${cfg.nixVersion}";
   sshKeyPath = "${workDir}/builder_ed25519";
   hostKeyPath = "${workDir}/ssh_host_ed25519_key";
+  knownHostsPath = "${workDir}/known_hosts";
   readinessLogPath = "${workDir}/hexbox-readiness.log";
   idleLogPath = "${workDir}/hexbox-idle.log";
   bridgeLaunchPath = "${workDir}/hexbox-bridge";
@@ -59,18 +60,27 @@ let
   };
 
   bootstrapKeysScript = pkgs.writeShellScript "hexbox-bootstrap-keys" ''
-    set -euo pipefail
+        set -euo pipefail
 
-    workdir=${escapeShellArg workDir}
-    mkdir -p "$workdir"
+        workdir=${escapeShellArg workDir}
+        known_hosts_path=${escapeShellArg knownHostsPath}
+        mkdir -p "$workdir"
 
-    if [ ! -f "$workdir/builder_ed25519" ]; then
-      /usr/bin/ssh-keygen -t ed25519 -f "$workdir/builder_ed25519" -N "" -C ${escapeShellArg cfg.hostAlias}
-    fi
+        if [ ! -f "$workdir/builder_ed25519" ]; then
+          /usr/bin/ssh-keygen -t ed25519 -f "$workdir/builder_ed25519" -N "" -C ${escapeShellArg cfg.hostAlias}
+        fi
 
-    if [ ! -f "$workdir/ssh_host_ed25519_key" ]; then
-      /usr/bin/ssh-keygen -t ed25519 -f "$workdir/ssh_host_ed25519_key" -N "" -C ${escapeShellArg "${effectiveContainerName}-host"}
-    fi
+        if [ ! -f "$workdir/ssh_host_ed25519_key" ]; then
+          /usr/bin/ssh-keygen -t ed25519 -f "$workdir/ssh_host_ed25519_key" -N "" -C ${escapeShellArg "${effectiveContainerName}-host"}
+        fi
+
+        if [ -f "$workdir/ssh_host_ed25519_key.pub" ]; then
+          host_key=$(/usr/bin/cut -d ' ' -f 1-2 "$workdir/ssh_host_ed25519_key.pub")
+          /bin/cat > "$known_hosts_path" <<EOF
+    ${cfg.hostAlias},nix-builder,[${cfg.listenAddress}]:${toString cfg.port} $host_key
+    EOF
+          /bin/chmod 0644 "$known_hosts_path"
+        fi
   '';
 
   initScript = pkgs.writeShellScript "hexbox-init" ''
@@ -467,21 +477,29 @@ let
     Host nix-builder
       User ${cfg.sshUser}
       IdentityFile ${sshKeyPath}
-      ProxyCommand ${workDir}/proxy.sh
-      StrictHostKeyChecking no
-      UserKnownHostsFile /dev/null
+      ProxyCommand ${proxyScript}
+      StrictHostKeyChecking yes
+      UserKnownHostsFile ${knownHostsPath}
       LogLevel ERROR
   '';
 
   rootSshConfig = pkgs.writeText "container-builder-root-ssh-config" ''
+    Host nix-builder
+      User ${cfg.sshUser}
+      IdentityFile ${sshKeyPath}
+      ProxyCommand ${proxyScript}
+      StrictHostKeyChecking yes
+      UserKnownHostsFile ${knownHostsPath}
+      LogLevel ERROR
+
     Host ${cfg.hostAlias}
       HostName ${cfg.listenAddress}
       Port ${toString cfg.port}
       User ${cfg.sshUser}
       IdentityFile ${sshKeyPath}
       BatchMode yes
-      StrictHostKeyChecking no
-      UserKnownHostsFile /dev/null
+      StrictHostKeyChecking yes
+      UserKnownHostsFile ${knownHostsPath}
       LogLevel ERROR
   '';
 
@@ -790,6 +808,10 @@ in
         assertion = pkgs.stdenv.hostPlatform.isDarwin && pkgs.stdenv.hostPlatform.isAarch64;
         message = "`services.container-builder` is currently only supported on aarch64-darwin.";
       }
+      {
+        assertion = cfg.bridge.enable || cfg.listenAddress == "127.0.0.1";
+        message = "`services.container-builder.listenAddress` must be `127.0.0.1` when `services.container-builder.bridge.enable = false;`.";
+      }
     ];
 
     environment.systemPackages = [
@@ -805,60 +827,69 @@ in
     environment.etc."ssh/ssh_config.d/201-container-builder.conf".source = rootSshConfig;
 
     system.activationScripts.extraActivation.text = mkAfter ''
-      if [ ! -x ${escapeShellArg containerExecutable} ] || ! ${escapeShellArg containerExecutable} --version 2>/dev/null | /usr/bin/grep -q ${escapeShellArg cfg.installer.version}; then
-        echo "installing Apple container ${cfg.installer.version} from official pkg..." >&2
-        /usr/sbin/installer -pkg ${escapeShellArg containerInstallerPkg} -target /
-      fi
+            if [ ! -x ${escapeShellArg containerExecutable} ] || ! ${escapeShellArg containerExecutable} --version 2>/dev/null | /usr/bin/grep -q ${escapeShellArg cfg.installer.version}; then
+              echo "installing Apple container ${cfg.installer.version} from official pkg..." >&2
+              /usr/sbin/installer -pkg ${escapeShellArg containerInstallerPkg} -target /
+            fi
 
-      ${optionalString cfg.socktainer.enable ''
-        if [ ! -x ${escapeShellArg cfg.socktainer.binary} ] || ! ${escapeShellArg cfg.socktainer.binary} --version 2>/dev/null | /usr/bin/grep -q ${escapeShellArg cfg.socktainer.installer.version}; then
-          echo "installing Socktainer ${cfg.socktainer.installer.version} from official pkg..." >&2
-          /usr/sbin/installer -pkg ${escapeShellArg socktainerInstallerPkg} -target /
-        fi
-      ''}
+            ${optionalString cfg.socktainer.enable ''
+              if [ ! -x ${escapeShellArg cfg.socktainer.binary} ] || ! ${escapeShellArg cfg.socktainer.binary} --version 2>/dev/null | /usr/bin/grep -q ${escapeShellArg cfg.socktainer.installer.version}; then
+                echo "installing Socktainer ${cfg.socktainer.installer.version} from official pkg..." >&2
+                /usr/sbin/installer -pkg ${escapeShellArg socktainerInstallerPkg} -target /
+              fi
+            ''}
 
-      if ${escapeShellArg cfg.containerBinary} system status >/dev/null 2>&1; then
-        ${reconcileHostContainerInternalScript}
-      else
-        echo "warning: Apple container system is not running; skipping ${hostContainerInternalDomain} DNS reconciliation" >&2
-      fi
+            if ${escapeShellArg cfg.containerBinary} system status >/dev/null 2>&1; then
+              ${reconcileHostContainerInternalScript}
+            else
+              echo "warning: Apple container system is not running; skipping ${hostContainerInternalDomain} DNS reconciliation" >&2
+            fi
 
-      ${pkgs.coreutils}/bin/mkdir -p ${escapeShellArg workDir}
-      /usr/sbin/chown ${escapeShellArg owner}:staff ${escapeShellArg workDir}
-      /bin/chmod 0700 ${escapeShellArg workDir}
-      ${pkgs.coreutils}/bin/install -m 0755 ${bootstrapKeysScript} ${escapeShellArg "${workDir}/bootstrap-keys.sh"}
-      ${pkgs.coreutils}/bin/install -m 0755 ${initScript} ${escapeShellArg "${workDir}/init.sh"}
-      ${pkgs.coreutils}/bin/install -m 0755 ${proxyScript} ${escapeShellArg "${workDir}/proxy.sh"}
-      ${pkgs.coreutils}/bin/install -m 0755 ${startScript} ${escapeShellArg "${workDir}/start-container.sh"}
-      ${pkgs.coreutils}/bin/install -m 0755 ${stopScript} ${escapeShellArg "${workDir}/stop-container.sh"}
-      ${pkgs.coreutils}/bin/install -m 0755 ${reconcileHostContainerInternalScript} ${escapeShellArg "${workDir}/reconcile-host-container-internal.sh"}
-      ${pkgs.coreutils}/bin/install -m 0755 ${socktainerLaunchScript} ${escapeShellArg "${workDir}/socktainer.sh"}
-      ${pkgs.coreutils}/bin/install -m 0755 ${sshWrapperScript} ${escapeShellArg "${workDir}/ssh-wrapper.sh"}
-      ${pkgs.coreutils}/bin/install -m 0755 ${bridgeLaunchScript} ${escapeShellArg bridgeLaunchPath}
-      ${pkgs.coreutils}/bin/install -m 0755 ${helperScript} /usr/local/bin/hb
-      ${pkgs.coreutils}/bin/install -m 0644 ${userSshConfig} ${escapeShellArg "${workDir}/ssh_config"}
-      ${pkgs.coreutils}/bin/install -m 0644 ${rootSshConfig} ${escapeShellArg "${workDir}/ssh_config_root"}
-      /usr/sbin/chown ${escapeShellArg owner}:staff \
-        ${escapeShellArg "${workDir}/bootstrap-keys.sh"} \
-        ${escapeShellArg "${workDir}/init.sh"} \
-        ${escapeShellArg "${workDir}/proxy.sh"} \
-        ${escapeShellArg "${workDir}/start-container.sh"} \
-        ${escapeShellArg "${workDir}/stop-container.sh"} \
-        ${escapeShellArg "${workDir}/reconcile-host-container-internal.sh"} \
-        ${escapeShellArg "${workDir}/socktainer.sh"} \
-        ${escapeShellArg "${workDir}/ssh-wrapper.sh"} \
-        ${escapeShellArg bridgeLaunchPath} \
-        ${escapeShellArg "${workDir}/ssh_config"} \
-        ${escapeShellArg "${workDir}/ssh_config_root"}
+            ${pkgs.coreutils}/bin/mkdir -p ${escapeShellArg workDir}
+            /usr/sbin/chown ${escapeShellArg owner}:staff ${escapeShellArg workDir}
+            /bin/chmod 0700 ${escapeShellArg workDir}
+            ${pkgs.coreutils}/bin/install -m 0755 ${bootstrapKeysScript} ${escapeShellArg "${workDir}/bootstrap-keys.sh"}
+            ${pkgs.coreutils}/bin/install -m 0755 ${initScript} ${escapeShellArg "${workDir}/init.sh"}
+            ${pkgs.coreutils}/bin/install -m 0755 ${proxyScript} ${escapeShellArg "${workDir}/proxy.sh"}
+            ${pkgs.coreutils}/bin/install -m 0755 ${startScript} ${escapeShellArg "${workDir}/start-container.sh"}
+            ${pkgs.coreutils}/bin/install -m 0755 ${stopScript} ${escapeShellArg "${workDir}/stop-container.sh"}
+            ${pkgs.coreutils}/bin/install -m 0755 ${reconcileHostContainerInternalScript} ${escapeShellArg "${workDir}/reconcile-host-container-internal.sh"}
+            ${pkgs.coreutils}/bin/install -m 0755 ${socktainerLaunchScript} ${escapeShellArg "${workDir}/socktainer.sh"}
+            ${pkgs.coreutils}/bin/install -m 0755 ${sshWrapperScript} ${escapeShellArg "${workDir}/ssh-wrapper.sh"}
+            ${pkgs.coreutils}/bin/install -m 0755 ${bridgeLaunchScript} ${escapeShellArg bridgeLaunchPath}
+            ${pkgs.coreutils}/bin/install -m 0755 ${helperScript} /usr/local/bin/hb
+            ${pkgs.coreutils}/bin/install -m 0644 ${userSshConfig} ${escapeShellArg "${workDir}/ssh_config"}
+            ${pkgs.coreutils}/bin/install -m 0644 ${rootSshConfig} ${escapeShellArg "${workDir}/ssh_config_root"}
+            : > ${escapeShellArg knownHostsPath}
+            /bin/chmod 0644 ${escapeShellArg knownHostsPath}
+            if [ -e ${escapeShellArg "${hostKeyPath}.pub"} ]; then
+              host_key=$(${pkgs.coreutils}/bin/cut -d ' ' -f 1-2 ${escapeShellArg "${hostKeyPath}.pub"})
+              /bin/cat > ${escapeShellArg knownHostsPath} <<EOF
+      ${cfg.hostAlias},nix-builder,[${cfg.listenAddress}]:${toString cfg.port} $host_key
+      EOF
+            fi
+            /usr/sbin/chown ${escapeShellArg owner}:staff \
+              ${escapeShellArg "${workDir}/bootstrap-keys.sh"} \
+              ${escapeShellArg "${workDir}/init.sh"} \
+              ${escapeShellArg "${workDir}/proxy.sh"} \
+              ${escapeShellArg "${workDir}/start-container.sh"} \
+              ${escapeShellArg "${workDir}/stop-container.sh"} \
+              ${escapeShellArg "${workDir}/reconcile-host-container-internal.sh"} \
+              ${escapeShellArg "${workDir}/socktainer.sh"} \
+              ${escapeShellArg "${workDir}/ssh-wrapper.sh"} \
+              ${escapeShellArg bridgeLaunchPath} \
+              ${escapeShellArg knownHostsPath} \
+              ${escapeShellArg "${workDir}/ssh_config"} \
+              ${escapeShellArg "${workDir}/ssh_config_root"}
 
-      ${optionalString cfg.socktainer.enable ''
-        ${pkgs.coreutils}/bin/mkdir -p ${escapeShellArg socktainerStateDirectory}
-        /usr/sbin/chown ${escapeShellArg owner}:staff ${escapeShellArg socktainerStateDirectory}
-      ''}
+            ${optionalString cfg.socktainer.enable ''
+              ${pkgs.coreutils}/bin/mkdir -p ${escapeShellArg socktainerStateDirectory}
+              /usr/sbin/chown ${escapeShellArg owner}:staff ${escapeShellArg socktainerStateDirectory}
+            ''}
 
-      if [ ! -e ${escapeShellArg sshKeyPath} ] || [ ! -e ${escapeShellArg "${sshKeyPath}.pub"} ] || [ ! -e ${escapeShellArg hostKeyPath} ] || [ ! -e ${escapeShellArg "${hostKeyPath}.pub"} ]; then
-        echo "warning: container-builder keys are missing in ${workDir}; run ${workDir}/bootstrap-keys.sh" >&2
-      fi
+            if [ ! -e ${escapeShellArg sshKeyPath} ] || [ ! -e ${escapeShellArg "${sshKeyPath}.pub"} ] || [ ! -e ${escapeShellArg hostKeyPath} ] || [ ! -e ${escapeShellArg "${hostKeyPath}.pub"} ]; then
+              echo "warning: container-builder keys are missing in ${workDir}; run ${workDir}/bootstrap-keys.sh" >&2
+            fi
     '';
 
     launchd.user.agents."${bridgeAgentName}" = mkIf cfg.bridge.enable {

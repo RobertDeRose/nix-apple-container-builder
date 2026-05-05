@@ -20,7 +20,7 @@ _hb() {
       ;;
     builder)
       if [ "$COMP_CWORD" -eq 2 ]; then
-        COMPREPLY=($(compgen -W "status logs repair reset gc inspect ssh help" -- "$cur"))
+        COMPREPLY=($(compgen -W "status logs test repair reset gc inspect ssh help" -- "$cur"))
         return 0
       fi
 
@@ -41,7 +41,7 @@ _hb() {
           return 0
           ;;
         help)
-          COMPREPLY=($(compgen -W "status logs repair reset gc inspect ssh" -- "$cur"))
+          COMPREPLY=($(compgen -W "status logs test repair reset gc inspect ssh" -- "$cur"))
           return 0
           ;;
         ssh)

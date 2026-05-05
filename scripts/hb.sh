@@ -249,6 +249,33 @@ builder::logs() {
   show_logs "$argc_target" "${argc_follow:-0}" "${argc_lines:-100}"
 }
 
+# @cmd Run a simple remote build smoke test through the builder
+builder::test() {
+  hb_init
+  local nonce
+
+  nonce=$(/bin/date +%s)
+
+  builder::repair
+  print_heading '🧪' "Remote build smoke test (forced hello rebuild, nonce=$nonce)"
+
+  exec env HB_HELLO_SMOKE_NONCE="$nonce" nix build \
+    --max-jobs 0 \
+    --no-link \
+    --rebuild \
+    --option substitute false \
+    --impure \
+    --expr '
+      let
+        pkgs = (builtins.getFlake "nixpkgs").legacyPackages.aarch64-linux;
+        nonce = builtins.getEnv "HB_HELLO_SMOKE_NONCE";
+      in
+      pkgs.hello.overrideAttrs (_: {
+        name = "hello-hb-smoke-${nonce}";
+      })
+    '
+}
+
 # @cmd Verify builder health and recover runtime if needed
 builder::repair() {
   hb_init

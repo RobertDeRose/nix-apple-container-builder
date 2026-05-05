@@ -249,6 +249,33 @@ builder::logs() {
   show_logs "$argc_target" "${argc_follow:-0}" "${argc_lines:-100}"
 }
 
+# @cmd Run a simple remote build smoke test through the builder
+builder::test() {
+  hb_init
+  local nonce
+
+  nonce=$(/bin/date +%s)
+
+  builder::repair
+  print_heading '🧪' "Remote build smoke test (forced hello rebuild, nonce=$nonce)"
+
+  exec env HB_HELLO_SMOKE_NONCE="$nonce" nix build \
+    --max-jobs 0 \
+    --no-link \
+    --rebuild \
+    --option substitute false \
+    --impure \
+    --expr '
+      let
+        pkgs = (builtins.getFlake "nixpkgs").legacyPackages.aarch64-linux;
+        nonce = builtins.getEnv "HB_HELLO_SMOKE_NONCE";
+      in
+      pkgs.hello.overrideAttrs (_: {
+        name = "hello-hb-smoke-${nonce}";
+      })
+    '
+}
+
 # @cmd Verify builder health and recover runtime if needed
 builder::repair() {
   hb_init
@@ -661,6 +688,7 @@ USAGE: hb builder <COMMAND>
 COMMANDS:
   status   Show builder status summary
   logs     Show builder logs
+  test     Run a simple remote build smoke test through the builder
   repair   Verify builder health and recover runtime if needed
   reset    Destroy and recreate the builder container
   gc       Run nix garbage collection inside the builder
@@ -672,7 +700,7 @@ EOF
 
 _argc_parse_builder() {
   local _argc_key _argc_action
-  local _argc_subcmds="status, logs, repair, reset, gc, inspect, ssh"
+  local _argc_subcmds="status, logs, test, repair, reset, gc, inspect, ssh"
   while [[ $_argc_index -lt $_argc_len ]]; do
     _argc_item="${argc__args[_argc_index]}"
     _argc_key="${_argc_item%%=*}"
@@ -694,6 +722,11 @@ _argc_parse_builder() {
       logs)
         _argc_index=$((_argc_index + 1))
         _argc_action=_argc_parse_builder_logs
+        break
+        ;;
+      test)
+        _argc_index=$((_argc_index + 1))
+        _argc_action=_argc_parse_builder_test
         break
         ;;
       repair)
@@ -729,6 +762,9 @@ _argc_parse_builder() {
             ;;
           logs)
             _argc_usage_builder_logs
+            ;;
+          test)
+            _argc_usage_builder_test
             ;;
           repair)
             _argc_usage_builder_repair
@@ -883,6 +919,47 @@ _argc_parse_builder_logs() {
       _argc_validate_choices '`<TARGET>`' "$(printf "%s\n" idle readiness bridge bridge-out boot)" "$argc_target"
     else
       _argc_die 'error: the required environments `<TARGET>` were not provided'
+    fi
+  fi
+}
+
+_argc_usage_builder_test() {
+  cat <<- 'EOF'
+Run a simple remote build smoke test through the builder
+
+USAGE: hb builder test
+EOF
+  exit
+}
+
+_argc_parse_builder_test() {
+  local _argc_key _argc_action
+  local _argc_subcmds=""
+  while [[ $_argc_index -lt $_argc_len ]]; do
+    _argc_item="${argc__args[_argc_index]}"
+    _argc_key="${_argc_item%%=*}"
+    case "$_argc_key" in
+      --help | -help | -h)
+        _argc_usage_builder_test
+        ;;
+      --)
+        _argc_dash="${#argc__positionals[@]}"
+        argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+        _argc_index=$_argc_len
+        break
+        ;;
+      *)
+        argc__positionals+=("$_argc_item")
+        _argc_index=$((_argc_index + 1))
+        ;;
+    esac
+  done
+  if [[ -n ${_argc_action:-} ]]; then
+    $_argc_action
+  else
+    argc__fn=builder::test
+    if [[ ${argc__positionals[0]:-} == "help" ]] && [[ ${#argc__positionals[@]} -eq 1 ]]; then
+      _argc_usage_builder_test
     fi
   fi
 }
