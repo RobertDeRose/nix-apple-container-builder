@@ -49,8 +49,19 @@ Current default behavior to keep in mind:
 - `port = 2222`
 - `dns.servers = [ ]` to preserve Apple's default container resolver
 - `exposeHostContainerInternal = true`
+- `cli.completions.enable = false`
 
 Avoid setting `dns.servers` unless you have verified the chosen resolvers work
 correctly with Apple containers in your environment. In local testing,
 overriding DNS with public resolvers broke both `host.container.internal` and
 normal external lookups from inside the builder container.
+
+If you want shell completions for `hb`, enable:
+
+```nix
+services.container-builder.cli.completions.enable = true;
+```
+
+This installs bash, zsh, and fish completion files through standard Nix
+completion directories. It does not detect your current shell or modify shell
+startup files.

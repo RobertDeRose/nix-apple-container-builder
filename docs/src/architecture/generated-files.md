@@ -23,3 +23,8 @@ generated from the active Nix configuration and should not be edited manually.
 
 The repository copy of `assets/hb.sh` is also generated. Edit `scripts/hb.sh`
 and regenerate `assets/hb.sh` instead of changing the built helper directly.
+
+The checked-in shell completion assets under `assets/completions/` are part of
+the `hb` distribution path. The module installs them through Nix's
+`installShellCompletion` hook into the standard shell completion directories
+instead of mutating user shell dotfiles.

@@ -39,6 +39,7 @@ Important options:
 - `idleShutdown.enable`
 - `idleShutdown.timeoutSeconds`
 - `bridge.enable`
+- `cli.completions.enable`
 - `socktainer.enable`
 - `socktainer.binary`
 - `socktainer.homeDirectory`
@@ -55,6 +56,14 @@ DNS notes:
   `host.container.internal` exists through `container system dns`.
 - Prefer leaving `dns.servers` empty unless you have verified custom resolvers
   work correctly with Apple containers in your environment.
+
+Completion notes:
+
+- `cli.completions.enable` defaults to `false`.
+- When enabled, the module installs bash, zsh, and fish completion files into
+  the standard Nix-managed completion directories.
+- The module does not try to detect the user's shell or edit shell startup
+  files.
 
 See `modules/container-builder.nix` for the authoritative option defaults and
 types.

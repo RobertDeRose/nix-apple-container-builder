@@ -155,6 +155,16 @@ The helper also exposes:
 - `hb socktainer logs`
 - `hb socktainer logs -f`
 
+To install shell completions for `hb`, set:
+
+```nix
+services.container-builder.cli.completions.enable = true;
+```
+
+This is opt-in. When enabled, the module installs bash, zsh, and fish
+completion files into the standard Nix-managed shell completion directories.
+It does not guess the user's shell or modify shell startup files.
+
 To export `DOCKER_HOST` automatically for user sessions, set:
 
 ```nix

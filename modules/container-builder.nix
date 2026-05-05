@@ -432,6 +432,23 @@ let
     exec ${escapeShellArg ./../assets/hb.sh} "$@"
   '';
 
+  completionPackage = pkgs.stdenvNoCC.mkDerivation {
+    pname = "hb-completions";
+    version = "1";
+    dontUnpack = true;
+    nativeBuildInputs = [
+      pkgs.installShellFiles
+    ];
+    installPhase = ''
+      runHook preInstall
+      installShellCompletion \
+        --bash --name hb ${./../assets/completions/hb.bash} \
+        --zsh --name _hb ${./../assets/completions/hb.zsh} \
+        --fish --name hb.fish ${./../assets/completions/hb.fish}
+      runHook postInstall
+    '';
+  };
+
   socktainerLaunchScript = pkgs.writeShellScript "hexbox-socktainer" ''
     set -euo pipefail
 
@@ -718,6 +735,12 @@ in
       description = "Run a user launch agent with socat to bridge host SSH traffic into `container exec`. Disable this to use direct published ports.";
     };
 
+    cli.completions.enable = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Install opt-in bash, zsh, and fish completion files for `hb` into the standard Nix-managed shell completion directories.";
+    };
+
     socktainer.enable = mkOption {
       type = types.bool;
       default = false;
@@ -769,7 +792,11 @@ in
       }
     ];
 
-    environment.systemPackages = [ pkgs.netcat ] ++ optional cfg.bridge.enable pkgs.socat;
+    environment.systemPackages = [
+      pkgs.netcat
+    ]
+    ++ optional cfg.bridge.enable pkgs.socat
+    ++ optional cfg.cli.completions.enable completionPackage;
 
     environment.variables = mkIf (cfg.socktainer.enable && cfg.socktainer.setDockerHost) {
       DOCKER_HOST = "unix://${socktainerSocketPath}";

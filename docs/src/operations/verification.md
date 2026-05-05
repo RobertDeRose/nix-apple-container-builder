@@ -57,3 +57,7 @@ hb socktainer logs
 hb socktainer logs -f
 DOCKER_HOST=unix://$HOME/.socktainer/container.sock docker ps
 ```
+
+If `services.container-builder.cli.completions.enable = true;` is set, `hb`
+completions are installed for bash, zsh, and fish via standard Nix completion
+paths. No per-shell setup files are modified by the module.
