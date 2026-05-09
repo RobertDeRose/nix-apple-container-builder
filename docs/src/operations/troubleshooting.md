@@ -20,7 +20,9 @@ runtime substrate is always healthy.
 
 `hb doctor runtime` checks the Apple container runtime and attempts recovery for
 known failure boundaries. `hb builder repair` uses the same runtime recovery
-path before retrying the builder.
+path before retrying the builder. `hb doctor dns` also restarts the Apple
+container runtime and retries once if external container reachability probes
+fail.
 
 ## Cache resolution fails inside the guest
 

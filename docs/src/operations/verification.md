@@ -33,7 +33,7 @@ retrying the builder startup path. It also verifies:
 - bridge agent presence
 - current builder container status
 - SSH handshake success
-- cache reachability inside the guest
+- outbound container TCP reachability for common external domains
 - remote store reachability from the host side
 
 Other useful helper commands:

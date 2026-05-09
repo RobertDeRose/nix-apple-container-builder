@@ -139,6 +139,26 @@ status_with_retries() {
   return 1
 }
 
+probe_common_external_domains() {
+  local failed=0
+  local domains
+  local domain
+
+  domains=(google.com github.com cache.nixos.org)
+  for domain in "${domains[@]}"; do
+    if probe_container_tcp_target "$domain" 443; then
+      print_mark ok "Container can reach $domain:443"
+    else
+      print_mark fail "Container cannot reach $domain:443"
+      failed=1
+    fi
+  done
+
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
+}
+
 # @cmd Builder operations
 builder() {
   builder::status
@@ -329,10 +349,7 @@ builder::repair() {
     exit 1
   fi
 
-  if /usr/bin/ssh -F "$ssh_config" -o BatchMode=yes "$host_alias" 'nix store ping --store https://cache.nixos.org' > /dev/null 2>&1; then
-    print_mark ok 'Builder can reach cache.nixos.org'
-  else
-    print_mark fail 'Builder cannot reach cache.nixos.org'
+  if ! probe_common_external_domains; then
     exit 1
   fi
 
@@ -497,26 +514,23 @@ doctor::runtime() {
 # @cmd Check container access to common external domains
 doctor::dns() {
   hb_init
-  local failed=0
-  local domains
 
   print_heading '🌐' 'DNS check'
-  domains=(google.com github.com cache.nixos.org)
 
   if ! status_system > /dev/null; then
     recover_container_system > /dev/null
   fi
 
-  for domain in "${domains[@]}"; do
-    if probe_container_tcp_target "$domain" 443; then
-      print_mark ok "Container can reach $domain:443"
-    else
-      print_mark fail "Container cannot reach $domain:443"
-      failed=1
-    fi
-  done
+  if probe_common_external_domains; then
+    exit 0
+  fi
 
-  if [ "$failed" -ne 0 ]; then
+  print_mark fail 'Container external reachability failed; restarting Apple container runtime and retrying'
+  if ! recover_container_system > /dev/null; then
+    exit 1
+  fi
+
+  if ! probe_common_external_domains; then
     exit 1
   fi
 }
@@ -526,6 +540,7 @@ doctor::dns() {
 doctor::host() {
   hb_init
   local port="${argc_port:-}"
+  local resolved=0
 
   print_heading '🏠' 'Host reachability check'
 
@@ -534,6 +549,20 @@ doctor::host() {
   fi
 
   if probe_container_dns_name host.container.internal; then
+    resolved=1
+  elif [ "$expose_host_container_internal" = true ]; then
+    if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+      "$reconcile_host_container_internal"
+    else
+      /usr/bin/sudo "$reconcile_host_container_internal"
+    fi
+
+    if probe_container_dns_name host.container.internal; then
+      resolved=1
+    fi
+  fi
+
+  if [ "$resolved" -eq 1 ]; then
     print_mark ok 'Container resolves host.container.internal'
   else
     print_mark fail 'Container cannot resolve host.container.internal'
