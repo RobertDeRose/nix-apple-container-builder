@@ -29,7 +29,7 @@ local linters = new Mapping<String, Step> {
   ["shellcheck"] = Builtins.shellcheck
   ["shfmt"] = Builtins.shfmt
   ["tombi_format"] = Builtins.tombi_format
-  ["tombi"] = Builtins.tombi
+  ["tombi"] = (Builtins.tombi) { exclude = List("mise.toml") }
   ["trailing-whitespace"] = Builtins.trailing_whitespace
 }
 

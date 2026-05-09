@@ -526,6 +526,7 @@ doctor::dns() {
 doctor::host() {
   hb_init
   local port="${argc_port:-}"
+  local resolved=0
 
   print_heading '🏠' 'Host reachability check'
 
@@ -534,6 +535,20 @@ doctor::host() {
   fi
 
   if probe_container_dns_name host.container.internal; then
+    resolved=1
+  elif [ "$expose_host_container_internal" = true ]; then
+    if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+      "$reconcile_host_container_internal"
+    else
+      /usr/bin/sudo "$reconcile_host_container_internal"
+    fi
+
+    if probe_container_dns_name host.container.internal; then
+      resolved=1
+    fi
+  fi
+
+  if [ "$resolved" -eq 1 ]; then
     print_mark ok 'Container resolves host.container.internal'
   else
     print_mark fail 'Container cannot resolve host.container.internal'
