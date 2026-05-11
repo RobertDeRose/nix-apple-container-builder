@@ -13,6 +13,6 @@
 
   nixImage = {
     repository = "docker.io/nixos/nix";
-    version = "2.34.6";
+    version = "2.34.7";
   };
 }
